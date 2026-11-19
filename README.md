@@ -1,0 +1,187 @@
+# Business Command Centre
+
+Upload a customer Purchase Order PDF → extract it with OCR → **a human reviews and approves** → a CSV lands in the folder SAP S/4HANA polls → the Sales Order number comes back.
+
+> **Guiding principle:** a bad OCR read must never silently become a wrong Sales Order.
+> The review screen, the approval checkpoint and segregation of duties all exist to serve that.
+
+Specs live in [`docs/`](docs/) — this project is built spec-first: [requirements](docs/01-requirements.md) → [design](docs/02-design.md) → [tasks](docs/03-tasks.md).
+
+---
+
+## Quick start
+
+```bash
+# 1. Postgres (Docker must be running)
+npm install
+npm run db:up
+
+# 2. Configure
+cp .env.example backend/.env
+#    then either set GEMINI_API_KEY=... for real extraction,
+#    or set EXTRACTION_PROVIDER=mock to run without a key
+
+# 3. Schema + seed users and vendor profiles
+npm -w backend run prisma:migrate
+npm -w backend run seed
+
+# 4. Run API + web + the SAP simulator together
+npm run dev
+```
+
+| Service | URL |
+|---|---|
+| Business Command Centre UI | http://localhost:5190 |
+| API | http://localhost:4010/api |
+| Health | http://localhost:4010/api/health |
+| Postgres | `localhost:5439` (user/pass/db: `cockpit`) |
+
+**Seeded logins** — all use the password `cockpit123`:
+
+| Email | Role | Can approve? |
+|---|---|---|
+| `uploader@cockpit.local` | Uploader | no |
+| `approver@cockpit.local` | Approver | yes — but not their own uploads |
+| `ops@cockpit.local` | Operations | no |
+| `admin@cockpit.local` | Administrator | yes |
+
+Segregation of duties is on by default (`SOD_REQUIRE_SEPARATE_APPROVER=true`), so upload as the uploader and approve as the approver.
+
+**Uploading several POs at once:** select or drop up to 50 PDFs on the worklist. Each becomes its own record and is sent straight for extraction; a summary lists anything that was skipped, refused or left as a draft (for instance a PDF identical to one already in the system). Nothing reaches SAP until an approver approves it. One file still opens its draft first, so you can check it before publishing.
+
+**SAP calling the Business Command Centre:** SAP can fetch its waiting orders and post back results over HTTPS instead of (or besides) the folders: [docs/04-sap-api.md](docs/04-sap-api.md) is the page to give the SAP team, and [DEPLOY.md](DEPLOY.md#letting-sap-call-the-cockpit-optional) says how to switch it on.
+
+**Dashboard:** the *Dashboard* link shows what the Business Command Centre has done for the POs uploaded in the last 7, 30 or 90 days (or ever): POs processed, the share approved with no edits, time saved, what reviewers caught before SAP, what SAP rejected, how well it reads, and where the work sits now. Everything is counted from the audit trail except *time saved*, which is an estimate from stated assumptions (minutes to key a PO by hand versus to check it here) that you set in the `DASHBOARD_*` variables.
+
+**Notifications:** the bell shows what needs you, by role: approvers hear when a PO is ready for review, the uploader hears when their PO is sent back, rejected or becomes a Sales Order, and Operations hears about failures and integration problems. Each person chooses what they receive on the *Notifications* page. Email and a Microsoft Teams channel switch on with the `SMTP_*` and `NOTIFY_TEAMS_WEBHOOK_URL` variables — see [DEPLOY.md](DEPLOY.md#notifications-optional).
+
+**Reviewing a batch:** on a record awaiting review, **Approve & next** approves it and opens the oldest record still waiting, so a drop of twenty is one click per order. The worklist keeps its view, search and sort in the address bar, so opening a record and coming back (or pressing Back) returns to the same list.
+
+### Need a PO to test with?
+
+Ready-made PDFs live in [`samples/`](samples/) — thirteen industry-realistic layouts
+(UK, German, US, Indian, Swedish, French, Italian, Canadian; a fax-style **scan with no
+text layer** and a second, **skewed and faded** one; a **multi-column** page; a
+**prose letter** where the order lives inside sentences; a **two-page** order; and
+ones with **discount columns**, **several totals** and **per-line delivery dates**).
+Or generate one:
+
+```bash
+npm -w backend exec tsx scripts/makeSamplePo.ts -- samples/po.pdf --vendor=northwind
+# vendors: northwind | mock | apex | shakti | nordica | scan | columns | letter
+#          multipage | bondecommande | ordine | discounts | skewscan
+```
+
+The `--` matters: without it npm swallows `--vendor` and you silently get the default
+layout.
+
+Four of the thirteen match a seeded vendor profile; the rest deliberately exercise
+the generic-prompt fallback.
+
+---
+
+## The lifecycle
+
+```
+Draft → Published → Processing → Needs Review → Approved → Sent to SAP → SO Created
+                          │            ▲                                      │
+                          ▼            └───────── Failed ◀─────────────────────┘
+                   Extraction Failed              (resubmit)
+```
+
+Every transition is enforced server-side, and every one writes an audit event.
+
+---
+
+## Layout
+
+```
+docs/                  the specs — read these first
+backend/
+  prisma/              schema, migration, seed
+  scripts/             sample PO PDF generator
+  src/
+    domain/            status machine, field contract, validation rules
+    services/          records, extraction (Gemini + mock), sap (csv/outbound/watcher)
+    workers/           polling loops: extraction, outbound, results, SLA sweep
+    simulator/         stands in for the SAP polling job — not part of the Business Command Centre
+frontend/src/          React SPA: worklist + review screen
+docker-compose.yml     Postgres 16
+```
+
+`integration/` and `storage/` are created at runtime and are gitignored:
+
+```
+integration/
+  outbound/            Business Command Centre writes order CSVs here; SAP polls
+  outbound/.staging/   temp files for the atomic-rename strategy
+  inbound/             SAP writes result files here; Business Command Centre polls
+  inbound/archive/     processed results, by date
+  inbound/quarantine/  unmatched or unparseable results — never deleted
+```
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | API + web + SAP simulator |
+| `npm run dev:api` / `dev:web` / `sap:sim` | one at a time |
+| `npm test` | Unit tests on the correctness-critical paths (status machine, validation, CSV and file handoff, result parsing, error handling, the approval race) |
+| `npm -w backend run prisma:studio` | browse the database |
+| `npm run db:up` / `db:down` | Postgres container |
+
+---
+
+## Hosted demo
+
+A free-tier deployment runs at **https://po-cockpit.onrender.com** (Render, Singapore) against Supabase Postgres in the same region. `render.yaml` is the blueprint; [`DEPLOY.md`](DEPLOY.md) is the full runbook.
+
+### Re-baking the demo records
+
+```powershell
+node "$env:TEMP\cockpit-prebake\prebake2.mjs"
+```
+
+Cancels the existing records, uploads two sample POs, publishes them and waits for each to reach *Needs review*. Takes ~40 seconds and two extraction calls.
+
+It passes a duplicate-override reason deliberately: once a copy of a sample PDF has reached SAP, `FR-3.4` refuses to publish an identical file without a stated reason — which is every re-bake after the first successful run.
+
+**Why you might need it:** to reset the demo walk-through to a known state. PDFs are stored in Postgres alongside the records (the container disk is only a cache), so deploys and wake-from-sleep no longer break the document pane — except for records uploaded before that change, whose bytes are gone for good and want a re-bake once.
+
+If `%TEMP%` has been cleared, regenerate the PDFs the script expects:
+
+```powershell
+$d = "$env:TEMP\cockpit-prebake"; mkdir $d -Force
+npm -w backend exec tsx scripts/makeSamplePo.ts -- "$d\po1.pdf" --vendor=northwind
+npm -w backend exec tsx scripts/makeSamplePo.ts -- "$d\po2.pdf" --vendor=mock
+```
+
+> **Pushing to `main` redeploys.** `render.yaml` sets `autoDeployTrigger: commit`. A deploy no longer loses PDFs (they live in Postgres), but it does restart the service — turn Auto-Deploy off in the Render dashboard before a live demo so a stray push can't cold-start it mid-walkthrough.
+
+---
+
+## Configuration worth knowing
+
+| Variable | Default | Why it matters |
+|---|---|---|
+| `EXTRACTION_PROVIDER` | `gemini` | `mock` runs the full lifecycle with no API key. The server **refuses to start** if set to `gemini` with no key, rather than silently faking data. |
+| `CONFIDENCE_THRESHOLD` | `0.85` | Below this, a field is flagged for the reviewer. |
+| `SOD_REQUIRE_SEPARATE_APPROVER` | `true` | Whether an uploader may approve their own record (OQ-01). |
+| `CSV_LAYOUT` | `single_file` | `single_file` (REC_TYPE marker), `header_lines_pair`, or `sap_flat` (the SAP team's own 18-column file, with `SAP_FLAT_*` settings for the columns a PO does not carry). All implemented — OQ-03 is still open. |
+| `CSV_DATE_FORMAT` / `CSV_DECIMAL_SEPARATOR` | `iso` / `.` | What SAP receives, whatever the PO printed (`SEP 17, 2026`, `1.234,56`). Dates: `iso`, `yyyymmdd` or `dd.mm.yyyy`. Also provisional until OQ-03 closes. |
+| `CSV_LINE_ENDING` | `lf` | How each line of the outbound CSV ends: `lf`, or `crlf` (CR+LF) when the SAP job reads a file the way a PC writes it. |
+| `COMPLETENESS_CONVENTION` | `done_marker` | `done_marker` or atomic `rename`. Both implemented — OQ-04 is still open. |
+| `SAP_SLA_TIMEOUT_MS` | 1 hour | After this, a record stuck in *Sent to SAP* is marked Failed rather than waiting forever. |
+
+---
+
+## Status
+
+**Milestone 1 is complete** — the whole lifecycle runs end to end. Verified scenarios, deferred requirements and remaining blockers are listed in [`docs/03-tasks.md`](docs/03-tasks.md).
+
+Two things to settle before this meets a real SAP system:
+
+- **OQ-03/04/05** — the actual CSV schema, completeness convention and result format from the SAP team. Both candidate layouts ship behind config, so closing these is an env change.
+- **OQ-07** — data-protection clearance for sending customer PO PDFs to Gemini.

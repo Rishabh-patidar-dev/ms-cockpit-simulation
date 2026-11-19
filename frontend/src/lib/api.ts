@@ -1,0 +1,234 @@
+import type { UploadResult } from './batchUpload';
+import type {
+  AuthUser,
+  BulkOutcome,
+  ChannelStatus,
+  DashboardData,
+  Inbox,
+  NotificationKind,
+  NotificationPreference,
+  Readiness,
+  RecordDetail,
+  SapLogCall,
+  SapLogState,
+  WorklistRow,
+} from './types';
+
+const TOKEN_KEY = 'cockpit.token';
+
+export const getToken = () => {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+};
+
+export const setToken = (token: string | null) => {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* private browsing — the session simply will not persist across reloads */
+  }
+};
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    override readonly message: string,
+    readonly code: string,
+    readonly details?: unknown,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * A 401 on anything but the login call means the session died (the JWT lasts 12h).
+ * Without this, an expired token masquerades as "Record not found" or an empty
+ * worklist. Clearing the token and reloading lands cleanly on the sign-in page.
+ */
+function expireSession(): never {
+  setToken(null);
+  window.location.assign('/');
+  throw new ApiError(401, 'Your session has expired. Sign in again.', 'SESSION_EXPIRED');
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = getToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init.body && !(init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const res = await fetch(`/api${path}`, { ...init, headers });
+  if (res.status === 401 && path !== '/auth/login' && token) expireSession();
+
+  if (res.status === 204) return undefined as T;
+
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+
+  if (!res.ok) {
+    const err = body?.error ?? {};
+    throw new ApiError(res.status, err.message ?? res.statusText, err.code ?? 'ERROR', err.details);
+  }
+  return body as T;
+}
+
+export const api = {
+  login: (email: string, password: string) =>
+    request<{ token: string; user: AuthUser }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+
+  me: () => request<{ user: AuthUser }>('/auth/me'),
+
+  health: () => request<{ ok: boolean; checks: Record<string, { ok: boolean; error?: string }> }>('/health'),
+
+  list: (params: { status?: string; q?: string; mine?: boolean; take?: number; skip?: number }) => {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set('status', params.status);
+    if (params.q) qs.set('q', params.q);
+    if (params.mine) qs.set('mine', 'true');
+    if (params.take != null) qs.set('take', String(params.take));
+    if (params.skip != null) qs.set('skip', String(params.skip));
+    return request<{ rows: WorklistRow[]; total: number }>(`/records?${qs}`);
+  },
+
+  counts: () => request<Record<string, number>>('/records/counts'),
+
+  dashboard: (days: number) => request<DashboardData>(`/dashboard?days=${days}`),
+
+  notifications: (limit = 30) => request<Inbox>(`/notifications?limit=${limit}`),
+  markNotificationsRead: () => request<Inbox>('/notifications/read', { method: 'POST' }),
+  notificationPrefs: () => request<{ preferences: NotificationPreference[] }>('/notifications/preferences'),
+  setNotificationPref: (kind: NotificationKind, change: { inApp?: boolean; email?: boolean }) =>
+    request<{ preferences: NotificationPreference[] }>('/notifications/preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ kind, ...change }),
+    }),
+  notificationChannels: () => request<ChannelStatus>('/notifications/channels'),
+  sendTestNotification: () => request<{ result: string; email: boolean; teams: boolean }>('/notifications/test', { method: 'POST' }),
+
+  /**
+   * The next record waiting for review, oldest first (the list itself is newest first),
+   * leaving out `excludeId`: the one just dealt with, which is still in review after a
+   * send-back. Null when nothing else is waiting.
+   */
+  nextForReview: async (excludeId: string): Promise<string | null> => {
+    const head = await api.list({ status: 'NEEDS_REVIEW', take: 1 });
+    if (head.total === 0) return null;
+    const oldest = await api.list({ status: 'NEEDS_REVIEW', take: 2, skip: Math.max(head.total - 2, 0) });
+    return [...oldest.rows].reverse().find((r) => r.id !== excludeId)?.id ?? null;
+  },
+
+  detail: (id: string) => request<RecordDetail>(`/records/${id}`),
+
+  upload: (file: File, vendorHint?: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (vendorHint) form.append('vendorHint', vendorHint);
+    return request<UploadResult>('/records', {
+      method: 'POST',
+      body: form,
+    });
+  },
+
+  publish: (id: string, overrideReason?: string) =>
+    request<RecordDetail>(`/records/${id}/publish`, {
+      method: 'POST',
+      body: JSON.stringify({ overrideReason }),
+    }),
+
+  updateFields: (id: string, updates: unknown) =>
+    request<RecordDetail>(`/records/${id}/fields`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    }),
+
+  addLine: (id: string) => request<RecordDetail>(`/records/${id}/lines`, { method: 'POST' }),
+
+  deleteLine: (id: string, lineNumber: number) =>
+    request<RecordDetail>(`/records/${id}/lines/${lineNumber}`, { method: 'DELETE' }),
+
+  acknowledge: (id: string, code: string, fieldPath: string) =>
+    request<RecordDetail>(`/records/${id}/acknowledge`, {
+      method: 'POST',
+      body: JSON.stringify({ code, fieldPath }),
+    }),
+
+  /** Accept every warning currently raised on the record. */
+  acknowledgeAll: (id: string) =>
+    request<RecordDetail>(`/records/${id}/acknowledge`, {
+      method: 'POST',
+      body: JSON.stringify({ all: true }),
+    }),
+
+  approve: (id: string) => request<RecordDetail>(`/records/${id}/approve`, { method: 'POST' }),
+
+  /** Which of these records could be approved in a batch, and why not for the rest. Approvers only. */
+  readiness: (ids: string[]) =>
+    request<{ readiness: Record<string, Readiness> }>('/records/readiness', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+
+  /** Approves the clean ones among `ids`; the server decides, and reports what became of each. */
+  bulkApprove: (ids: string[]) =>
+    request<{ outcomes: BulkOutcome[] }>('/records/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+
+  reject: (id: string, reason: string) =>
+    request<RecordDetail>(`/records/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  resubmit: (id: string) => request<RecordDetail>(`/records/${id}/resubmit`, { method: 'POST' }),
+
+  retryExtraction: (id: string) =>
+    request<RecordDetail>(`/records/${id}/retry-extraction`, { method: 'POST' }),
+
+  manualEntry: (id: string) => request<RecordDetail>(`/records/${id}/manual-entry`, { method: 'POST' }),
+
+  cancel: (id: string, reason?: string) =>
+    request<RecordDetail>(`/records/${id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  deleteRecord: (id: string) => request<void>(`/records/${id}`, { method: 'DELETE' }),
+
+  sapLog: (id: string) => request<SapLogState>(`/records/${id}/sap-log`),
+
+  callSapLog: (id: string) =>
+    request<{ call: SapLogCall }>(`/records/${id}/sap-log`, { method: 'POST' }),
+
+  /** The PDF is behind auth, so it is fetched as a blob rather than linked directly. */
+  documentUrl: (id: string) => pdfObjectUrl(`/api/records/${id}/document`),
+
+  /** The Sales Order document, once SAP has created the order. */
+  salesOrderUrl: (id: string) => pdfObjectUrl(`/api/records/${id}/sales-order`),
+};
+
+async function pdfObjectUrl(path: string): Promise<string> {
+  const res = await fetch(path, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
+  if (res.status === 401 && getToken()) expireSession();
+  if (!res.ok) {
+    let message = 'Could not load the PDF.';
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) message = body.error.message;
+    } catch {
+      /* non-JSON error body — keep the generic message */
+    }
+    throw new ApiError(res.status, message, 'PDF_ERROR');
+  }
+  return URL.createObjectURL(await res.blob());
+}

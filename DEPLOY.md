@@ -1,0 +1,264 @@
+# Deploying the Business Command Centre — free, no card
+
+A single container runs the API, the workers, the built UI and the SAP simulator.
+Postgres is hosted separately. Total cost **$0/month**, and **no payment card** is
+required at any step.
+
+| Piece | Service | Card? | Free limit that matters |
+|---|---|---|---|
+| API + workers + UI + simulator | **Render**, free web service | No | sleeps after ~15 min idle; disk is ephemeral |
+| Postgres | **Supabase**, free project | No | 500 MB; project pauses after ~7 days idle |
+| Extraction | Google AI Studio key | No | free-tier capacity → intermittent `503`s |
+
+## What this is, and what it isn't
+
+It **is** a complete, publicly reachable demo: upload a PO PDF → the model reads it →
+a human reviews the flagged fields → a separate approver signs it off → a CSV is
+written to the drop folder → a Sales Order number comes back.
+
+It **is not** the SAP integration. The drop folder lives on the container's own disk
+and the bundled simulator plays S/4HANA. Real SAP needs a host that can see SAP's
+actual file share, which means a machine inside your network. That's a different
+deployment, and this one doesn't block it.
+
+---
+
+## Step 1 — put the code on GitHub
+
+The project isn't a git repository yet.
+
+```powershell
+cd "E:\Innovun Global\MS_Cockpit_Simulation"
+git init
+git add -A
+git status
+```
+
+**Before committing, confirm `backend/.env` is NOT in the list.** `.gitignore`
+already excludes it, plus `storage/` and `integration/`. If you see it, stop and fix
+`.gitignore` — that file holds your Gemini key and JWT secret.
+
+```powershell
+git commit -m "Business Command Centre"
+```
+
+Then create the remote. With the GitHub CLI:
+
+```powershell
+gh repo create po-cockpit --private --source=. --push
+```
+
+Without it: create an empty **private** repo on github.com, then
+
+```powershell
+git remote add origin https://github.com/<you>/po-cockpit.git
+git branch -M main
+git push -u origin main
+```
+
+## Step 2 — create the database
+
+1. Sign up at **supabase.com** with GitHub. No card.
+2. **New project**. Pick the region closest to you (Mumbai / Singapore for India).
+3. Set a database password and **save it** — you need it in the next step.
+4. Wait for provisioning (~2 min).
+
+## Step 3 — get the right connection string ⚠️
+
+**This is the one step that will silently waste your morning if you get it wrong.**
+
+Supabase offers a *direct* connection and a *pooler* connection. The direct one is
+**IPv6-only**, and Render's free tier makes **IPv4-only** outbound connections — so
+the direct string fails from Render with a confusing DNS/timeout error.
+
+In the project's **Connect** panel, take the **Session pooler** string (IPv4-compatible,
+host looks like `...pooler.supabase.com`, port `5432`). Session mode supports prepared
+statements, so Prisma works with no extra flags and no `directUrl` in the schema.
+
+Avoid **Transaction pooler** (port `6543`) — it needs `?pgbouncer=true` plus a separate
+`directUrl` for migrations, which is extra moving parts you don't need for one instance.
+
+Substitute your saved password for `[YOUR-PASSWORD]`. Sanity-check it:
+
+```powershell
+$env:DATABASE_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+npm -w backend exec prisma db execute --stdin
+# paste:  SELECT 1;
+# then Ctrl+Z, Enter   (Ctrl+D on mac/linux)
+```
+
+## Step 4 — migrate and seed, from your laptop
+
+The first migration and the seed run from here. After that, `RUN_MIGRATIONS=true` in
+`render.yaml` applies any *later* migrations on container boot (a boot with nothing
+pending is a fast no-op, and `start.sh` refuses to start if a migration fails). Shell
+variables take precedence over `backend/.env`, so your local setup is untouched.
+
+```powershell
+$env:DATABASE_URL = "<the session pooler string from step 3>"
+
+npm -w backend run prisma:deploy
+npm -w backend run seed
+```
+
+**Check the output says `pooler.supabase.com`**, not `localhost:5439`. If it says
+localhost, the variable didn't take — open a fresh terminal and set it again.
+
+Expected: `1 migration applied` then `Seeded 4 users and 2 vendor profiles.`
+
+## Step 5 — deploy on Render
+
+1. Sign up at **render.com** with GitHub. No card for the free plan.
+2. **New → Blueprint**, pick your repo. It reads `render.yaml` and creates the service.
+3. It will ask for the two values marked `sync: false`:
+   - `DATABASE_URL` → the session pooler string from step 3
+   - `GEMINI_API_KEY` → your key (or leave blank and set `EXTRACTION_PROVIDER=mock`)
+4. `JWT_SECRET` is generated for you. Don't set it by hand.
+5. Deploy. The first build takes ~5–8 minutes (it installs dependencies and builds
+   both the backend and the frontend inside the image).
+
+If you'd rather not use the Blueprint: **New → Web Service**, connect the repo, choose
+**Docker**, health check path `/api/health`, and copy the env vars out of `render.yaml`
+by hand.
+
+## Step 6 — verify
+
+```powershell
+curl https://<your-service>.onrender.com/api/health
+```
+
+You want `"ok":true` with all three checks passing:
+
+```json
+{"ok":true,"checks":{"database":{"ok":true},"outboundFolder":{"ok":true},"inboundFolder":{"ok":true}}}
+```
+
+- `database` false → wrong connection string (almost always the IPv6 direct one).
+- `outboundFolder`/`inboundFolder` false → the container couldn't create its data dirs.
+
+Then open the URL and sign in as `approver@cockpit.local` / `cockpit123`.
+
+## Step 7 — pre-bake the demo data
+
+**Do this the night before or an hour ahead — not live.**
+
+Gemini's free tier returns `503 UNAVAILABLE` in bursts. It's per-model capacity, not
+your key: during testing the same key got a 503 on `gemini-3.5-flash` and a 200 on
+`3.6`, `3.7` and `3.8` in the same second. One PO needed 7 attempts.
+
+So: upload two POs, publish them, and retry until they reach **Needs review**. Leave
+them there. Your demo then walks real extracted data through review → approve → SAP →
+SO number, and the only live steps are the ones that have never failed.
+
+Generate test PDFs:
+
+```powershell
+npm -w backend exec tsx scripts/makeSamplePo.ts -- .\po1.pdf --vendor=northwind
+npm -w backend exec tsx scripts/makeSamplePo.ts -- .\po2.pdf --vendor=mock
+```
+
+If capacity is against you, set `EXTRACTION_PROVIDER=mock` in Render and redeploy.
+Mock is honest — the audit trail records `model: mock-extractor-v1` — and it produces
+fields at 0.55–0.80 confidence, which is what makes the review screen's margin marks
+visible. Real Gemini read the sample PO at 98–99%, so **nothing got flagged**, and the
+flagging is the most interesting thing in the product.
+
+---
+
+## Demo-morning checklist
+
+- [ ] Open the URL **10 minutes early** — free Render sleeps after 15 min idle and cold
+      start takes ~40–60s. Don't let the audience watch that.
+- [ ] `curl /api/health` → `ok:true`
+- [ ] Both pre-baked records still in **Needs review**
+- [ ] Signed in as `approver@cockpit.local` (the uploader **cannot** approve — that's the
+      control you want to demonstrate, so know which account you're on)
+- [ ] `SAP_SIM_FAILURE_RATE` — `render.yaml` ships it as `0`, so nothing is rejected. A
+      service created before that change keeps whatever the dashboard says (the old value
+      was `0.15`, a random 15% rejection), so check **Environment** in Render. Set it to
+      `0.15` when you want to show the failure path deliberately.
+
+## Letting SAP call the Business Command Centre (optional)
+
+The Business Command Centre has an HTTPS API for SAP's side: fetch the orders waiting for it, post back the Sales Order or the error. The SAP team needs only [docs/04-sap-api.md](docs/04-sap-api.md) and a key.
+
+1. Make a key (24+ random characters): `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+2. In the Render dashboard, **Environment**, add `SAP_API_KEY` (that key) and `SAP_API_ALLOWED_IPS` (SAP's public address, e.g. `103.44.1.206`; ranges like `103.44.1.0/24` work too). `TRUST_PROXY=3` is already in `render.yaml` (Render puts three proxies in front of the app: one inside the container, Render's router and Cloudflare). To check it, send a call with a wrong key and read the `SAP API call with a missing or wrong key` line in the Render logs: `ip` must be the caller's public address, and `forwardedFor` shows the whole chain.
+3. **Turn the simulator off:** set `RUN_SAP_SIMULATOR` to `false`. With it on, the demo simulator answers every order itself, before real SAP can, and invents the Sales Order numbers.
+4. Give the SAP team the key (not by email if you can avoid it) and the base URL `https://<your-service>.onrender.com/api/integration/sap`. They can test with `GET /ping`. In ABAP the simplest is an ordinary HTTP login: user `sap` (change it with `SAP_API_USER`), the key as the password. A Bearer or `X-API-Key` header works too.
+
+After any change to `render.yaml`, look at **Environment** again: a Blueprint sync can put back the values written in the file, so confirm `RUN_SAP_SIMULATOR=false`, `TRUST_PROXY=3` and that `SAP_API_KEY` is still set.
+
+Notes: the address list is only as good as what SAP's calls look like from the internet (a corporate proxy may change it); with the list empty, the key is the only protection. Ten wrong keys from one address lock it out for ten minutes. Calls and answers appear in each record's audit trail like any other result.
+
+## Notifications (optional)
+
+The bell in the top bar works as soon as the app does. Email and Microsoft Teams are off until you
+give them somewhere to send. Both are set in the Render dashboard under **Environment**, and
+saving them restarts the service (and, on the free plan, empties the PDF cache — they are kept in
+Postgres, so the documents come back).
+
+**Email** — any SMTP account: Microsoft 365 (`smtp.office365.com`, port 587, an app password or a
+service mailbox), SendGrid, Resend, Postmark and so on.
+
+| Variable | Example |
+|---|---|
+| `SMTP_HOST` | `smtp.office365.com` |
+| `SMTP_PORT` | `587` (use `465` with `SMTP_SECURE=true`) |
+| `SMTP_USER` / `SMTP_PASS` | the mailbox and its password or app password |
+| `SMTP_FROM` | `Business Command Centre <po-cockpit@yourcompany.com>` |
+| `NOTIFY_EMAIL_OVERRIDE_TO` | **your own address, for a demo.** The seeded users have `@cockpit.local` addresses that go nowhere; this sends every email to one inbox instead, and the subject says who it was for. |
+
+**Microsoft Teams** — in the channel: **… > Workflows > "Post to a channel when a webhook request is
+received"**, finish the wizard, and copy the URL it gives you into `NOTIFY_TEAMS_WEBHOOK_URL`.
+(The older Office 365 "Incoming Webhook" connectors were retired in 2026; this is their
+replacement.) That URL is a password for the channel — treat it like one. `NOTIFY_TEAMS_KINDS`
+narrows what goes there, for example `REVIEW_NEEDED,RECORD_FAILED,INTEGRATION_ALERT`.
+
+**Check it:** sign in as `admin@cockpit.local`, open **Notifications** (the bell > *All notifications
+& settings*) and press **Send me a test notification**. The page also shows, for Operations and
+administrators, how many emails and Teams messages went out in the last 24 hours and the last error.
+Delivery is retried five times with growing pauses, so a mail server that is briefly down delays
+messages rather than losing them.
+
+I could test the email and Teams paths here against stand-in servers (real SMTP, real HTTP), but
+not against Microsoft 365 or a real Teams tenant — the test button is how you confirm yours.
+
+## Limits you must know
+
+**The disk is ephemeral.** Render's free plan has no persistent volume, so on every
+deploy and every wake-from-sleep the container starts with empty `storage/` and
+`integration/`. Records, the audit trail **and the PDFs** survive in Supabase — the
+PDF bytes are stored on the record (`SourceDocument.content`) and the disk copy is
+only a cache, so the document pane keeps working across restarts. What a restart
+*does* lose is anything in flight in `integration/`: an order CSV the simulator had
+not consumed yet is gone, and that record falls to **Failed** via the SLA sweep —
+resubmit it. (Records uploaded before the durable-storage change have no database
+copy; their PDFs are permanently gone and the UI says so.)
+
+**Supabase pauses after ~7 days idle.** Open the dashboard once a week, or the first
+request after a long gap fails while it wakes.
+
+**The simulator fabricates Sales Order numbers.** `RUN_SAP_SIMULATOR=true` and
+`SAP_SIM_ALLOW_IN_PRODUCTION=true` in `render.yaml` are what make the demo complete.
+The simulator refuses to start under `NODE_ENV=production` without that second flag
+precisely so this image can never invent orders against a real SAP landscape by
+accident. **Never set those two on a deployment that talks to real SAP.**
+
+**Free tier is 512 MB RAM** for two Node processes plus the Prisma engine. It fits, but
+it's not roomy. If you see out-of-memory restarts, set `RUN_SAP_SIMULATOR=false` and
+demo up to "Sent to SAP", or move to the alternative below.
+
+## Rotate the Gemini key
+
+The key currently in `backend/.env` was pasted into a chat transcript. Generate a fresh
+one in Google AI Studio, put it in Render's env, and delete the old one. Never commit it
+— `.gitignore` covers `backend/.env`, which is the only reason it isn't already public.
+
+## If Render's free tier bites
+
+**Hugging Face Spaces** (Docker SDK) is also free with no card, and for this app it's
+arguably better: **16 GB RAM** instead of 512 MB, and it sleeps after ~48 hours idle
+instead of 15 minutes. Same `Dockerfile`; you add an `app_port` to the Space's README
+front-matter and set secrets in Space settings. Worth knowing as a fallback if memory
+or cold starts get in the way.

@@ -1,0 +1,410 @@
+<!doctype html><html data-theme="light"><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>PO to Sales Order Flow</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: swimlane circuit board — four system lanes, steps placed on a column grid, copper traces carry the PO between systems; detail + live data panels below. */
+:root{
+  --bg:#f2f4f3; --surface:#ffffff; --surface-2:#f7f9f8; --ink:#14201c; --muted:#5b6a64; --line:#d3dcd8; --grid:#e3e9e6;
+  --trace:#b4642a; --trace-soft:#f3e4d8;
+  --c-vendor:#6b7280; --c-exec:#b4642a; --c-appr:#8a3a64; --c-cockpit:#0f7b72; --c-sap:#1d5bbf;
+  --ok:#1b8750; --ok-soft:#dcf1e5;
+  --f-display:"Sora", "Segoe UI", system-ui, sans-serif;
+  --f-body:"IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1412; --surface:#16201c; --surface-2:#1b2622; --ink:#e4ebe8; --muted:#90a19a; --line:#2b3833; --grid:#1a2420;
+  --trace:#e38a4a; --trace-soft:#3a2a1e;
+  --c-vendor:#9aa3ad; --c-exec:#e38a4a; --c-appr:#d98ab8; --c-cockpit:#3cc1b4; --c-sap:#6ea4ff;
+  --ok:#4fca86; --ok-soft:#173527; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#0e1412; --surface:#16201c; --surface-2:#1b2622; --ink:#e4ebe8; --muted:#90a19a; --line:#2b3833; --grid:#1a2420;
+  --trace:#e38a4a; --trace-soft:#3a2a1e;
+  --c-vendor:#9aa3ad; --c-exec:#e38a4a; --c-appr:#d98ab8; --c-cockpit:#3cc1b4; --c-sap:#6ea4ff;
+  --ok:#4fca86; --ok-soft:#173527; color-scheme:dark;}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 48px}
+.wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:16px}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--trace)}
+h1{font-size:clamp(24px,3.4vw,34px);font-weight:700;letter-spacing:-.01em;margin-top:4px}
+.lede{color:var(--muted);max-width:62ch;margin:6px 0 0}
+
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{font:500 13px var(--f-body);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+.btn:hover{border-color:var(--trace)}
+.btn:focus-visible,.node:focus-visible{outline:2px solid var(--trace);outline-offset:2px}
+.btn.primary{background:var(--trace);border-color:var(--trace);color:#fff}
+.speed{font:12px var(--f-mono);color:var(--muted);display:flex;align-items:center;gap:6px}
+.speed select{font:12px var(--f-mono);background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px}
+
+/* progress rail */
+.rail{display:flex;gap:4px}
+.rail span{flex:1;height:4px;border-radius:2px;background:var(--line);transition:background .3s}
+.rail span.done{background:var(--trace)}
+
+/* board */
+.board-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.board{position:relative;display:grid;grid-template-columns:150px repeat(12,140px);grid-template-rows:repeat(5,128px);min-width:1850px;
+  background-image:radial-gradient(var(--grid) 1.2px,transparent 1.2px);background-size:14px 14px}
+.lane{grid-column:1 / -1;border-bottom:1px dashed var(--line)}
+.lane:last-of-type{border-bottom:0}
+.lane-label{grid-column:1;position:sticky;left:0;z-index:3;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 14px}
+.lane-label b{font-family:var(--f-display);font-size:13.5px;font-weight:600}
+.lane-label small{font-size:11.5px;color:var(--muted);line-height:1.3}
+.lane-label i{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+
+svg.traces{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;overflow:visible}
+.tr{fill:none;stroke:var(--line);stroke-width:2;stroke-dasharray:4 5;stroke-linejoin:round}
+.tr.done{stroke:var(--trace);stroke-dasharray:none;stroke-width:2.5}
+.tr.ret.done{stroke:var(--c-sap)}
+.pad{fill:var(--surface);stroke:var(--line);stroke-width:2}
+.pad.done{stroke:var(--trace);fill:var(--trace)}
+.packet{fill:var(--trace)}
+.packet-halo{fill:var(--trace);opacity:.25}
+
+.node{position:relative;z-index:2;align-self:center;justify-self:center;width:124px;min-height:84px;background:var(--surface);border:1.5px solid var(--line);
+  border-radius:10px;padding:9px 10px;cursor:pointer;text-align:left;font:inherit;color:inherit;display:flex;flex-direction:column;gap:4px;
+  transition:border-color .3s,box-shadow .3s,transform .3s,opacity .3s}
+.node .n{font:500 10.5px var(--f-mono);color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+.node .n i{width:7px;height:7px;border-radius:50%}
+.node .t{font-family:var(--f-display);font-size:12.5px;font-weight:600;line-height:1.25}
+.node.future{opacity:.55}
+.node.done{border-color:color-mix(in srgb,var(--trace) 45%,var(--line))}
+.node.active{border-color:var(--trace);box-shadow:0 0 0 4px var(--trace-soft),0 8px 22px -10px var(--trace);transform:translateY(-2px);opacity:1}
+.node.sap.active{border-color:var(--c-sap);box-shadow:0 0 0 4px color-mix(in srgb,var(--c-sap) 18%,transparent),0 8px 22px -10px var(--c-sap)}
+.node .check{color:var(--ok);font-size:12px;visibility:hidden}
+.node.done .check{visibility:visible}
+
+/* lower panels */
+.lower{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:18px}
+@media (max-width:860px){.lower{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel h2{font-size:19px;font-weight:600}
+.meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{font:500 11.5px var(--f-mono);border-radius:999px;padding:3px 9px;border:1px solid var(--line);color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+.chip i{width:7px;height:7px;border-radius:50%}
+.detail p{margin:0;max-width:62ch}
+.detail ul{margin:0;padding-left:18px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.detail ul b{color:var(--ink);font-weight:600}
+
+.live-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.tag-sample{font:500 10.5px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px dashed var(--line);padding:2px 7px;border-radius:5px}
+.stage{min-height:250px;display:flex;flex-direction:column;gap:10px;animation:fadein .45s ease}
+@keyframes fadein{from{opacity:.2;transform:translateY(4px)}to{opacity:1;transform:none}}
+.mono{font-family:var(--f-mono);font-size:12.5px}
+.box{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);padding:12px;overflow-x:auto}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-family:var(--f-mono);font-size:12.5px;overflow-wrap:anywhere}
+table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+th{font:500 10.5px var(--f-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid var(--grid);white-space:nowrap}
+td.r,th.r{text-align:right}
+.conf{display:inline-block;min-width:44px;text-align:right;font-family:var(--f-mono);font-size:11.5px;color:var(--ok)}
+.conf.low{color:var(--trace)}
+pre.csv{margin:0;font:12px/1.65 var(--f-mono);white-space:pre}
+pre.csv .h{color:var(--trace)}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.bar>span{display:block;height:100%;background:var(--c-cockpit);width:0;animation:fill 1.4s ease forwards}
+@keyframes fill{to{width:100%}}
+.http{display:flex;flex-direction:column;gap:6px}
+.verb{font-weight:600;color:var(--c-sap)}
+.status{color:var(--ok);font-weight:600}
+.big-so{font-family:var(--f-display);font-size:30px;font-weight:700;letter-spacing:.02em;color:var(--c-sap);font-variant-numeric:tabular-nums}
+.badge{font:600 11.5px var(--f-body);padding:3px 10px;border-radius:999px;background:var(--ok-soft);color:var(--ok);display:inline-flex;gap:5px;align-items:center}
+.badge.wait{background:var(--trace-soft);color:var(--trace)}
+.mail{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface)}
+.mail.new{border-color:var(--trace)}
+.mail small{color:var(--muted)}
+.mail .att{font:12px var(--f-mono);color:var(--c-sap);margin-top:4px}
+
+.mapping table td:first-child{color:var(--muted)}
+.mapping table td code{font-family:var(--f-mono);font-size:12px;color:var(--c-sap)}
+footer{color:var(--muted);font-size:12.5px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">Millennium Semiconductors · Order-to-Cash PoC</div>
+      <h1>From a PO in Outlook to a confirmed SAP Sales Order</h1>
+      <p class="lede">Each purchase order arrives by email with multiple line items. The Business Command Centre reads it with OCR, turns it into a CSV that SAP pulls over HTTPS, and shows the SAP Sales Order number (VBELN) back to the executive.</p>
+    </div>
+    <div class="controls">
+      <button class="btn" id="prev" aria-label="Previous step">◀ Prev</button>
+      <button class="btn primary" id="play">❚❚ Pause</button>
+      <button class="btn" id="next" aria-label="Next step">Next ▶</button>
+      <button class="btn" id="restart">↺ Restart</button>
+      <label class="speed" for="spd">Speed
+        <select id="spd"><option value="1.6">0.5×</option><option value="1" selected>1×</option><option value="0.55">2×</option></select>
+      </label>
+    </div>
+  </header>
+
+  <div class="rail" id="rail"></div>
+
+  <div class="board-scroll">
+    <div class="board" id="board">
+      <svg class="traces" id="traces"></svg>
+    </div>
+  </div>
+
+  <div class="lower">
+    <section class="panel detail" id="detail"></section>
+    <section class="panel">
+      <div class="live-head">
+        <h2>What the PO looks like at this step</h2>
+        <span class="tag-sample">Sample data</span>
+      </div>
+      <div class="stage" id="stage"></div>
+    </section>
+  </div>
+
+  <section class="panel mapping">
+    <h2>Field mapping: PO → CSV → SAP Sales Order</h2>
+    <div class="box" style="padding:0">
+      <table>
+        <thead><tr><th>PO field (OCR)</th><th>CSV column</th><th>SAP SO field</th><th>Level</th></tr></thead>
+        <tbody>
+          <tr><td>Customer PO number</td><td class="mono">PO_NO</td><td><code>VBKD-BSTKD</code></td><td>Header</td></tr>
+          <tr><td>PO date</td><td class="mono">PO_DATE</td><td><code>VBKD-BSTDK</code></td><td>Header</td></tr>
+          <tr><td>Buyer (sold-to)</td><td class="mono">SOLD_TO</td><td><code>VBAK-KUNNR</code></td><td>Header</td></tr>
+          <tr><td>Ship-to address</td><td class="mono">SHIP_TO</td><td><code>VBPA-KUNNR (WE)</code></td><td>Partner</td></tr>
+          <tr><td>Line number</td><td class="mono">ITEM</td><td><code>VBAP-POSNR</code></td><td>Item</td></tr>
+          <tr><td>Part number</td><td class="mono">MATERIAL</td><td><code>VBAP-MATNR</code></td><td>Item</td></tr>
+          <tr><td>Quantity / unit</td><td class="mono">QTY, UOM</td><td><code>VBAP-KWMENG, VRKME</code></td><td>Item</td></tr>
+          <tr><td>Unit price</td><td class="mono">PRICE, CURR</td><td><code>KONV (PR00), WAERK</code></td><td>Condition</td></tr>
+          <tr><td>Required delivery date</td><td class="mono">REQ_DATE</td><td><code>VBEP-EDATU</code></td><td>Schedule line</td></tr>
+          <tr><td>— returned by SAP —</td><td class="mono">—</td><td><code>VBAK-VBELN</code></td><td>Sales order no.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Click any step on the board to jump to it. Sample values (PO numbers, parts, SO number) are illustrative only. SAP field names are the standard SD tables; adjust to your actual mapping.</footer>
+</div>
+
+<script>
+const LANES=[
+  {key:'vendor', name:'Outlook', sub:'The PO arrives, the SO goes back', color:'--c-vendor'},
+  {key:'exec', name:'Sales Executive', sub:'Uploads, then views the result', color:'--c-exec'},
+  {key:'approver', name:'Approver', sub:'A second person signs off', color:'--c-appr'},
+  {key:'Business Command Centre', name:'Business Command Centre', sub:'Full-stack app + OCR', color:'--c-cockpit'},
+  {key:'sap', name:'SAP', sub:'Sales & Distribution', color:'--c-sap'}
+];
+const PO={no:'4500087321',date:'02.11.2026',vendor:'Sample Vendor: Arcadia Electronics Pvt Ltd',soldTo:'100245',shipTo:'Plant 2, Hosur',so:'0000412758',
+  items:[
+    {i:10,m:'MCU-32F-LQFP64',d:'32-bit MCU, LQFP-64',q:5000,u:'PC',p:84.50,dt:'20.11.2026',c:98.7},
+    {i:20,m:'MOSFET-N60V-DPAK',d:'N-ch MOSFET 60 V, DPAK',q:12000,u:'PC',p:11.20,dt:'20.11.2026',c:99.1},
+    {i:30,m:'LDO-3V3-SOT223',d:'LDO regulator 3.3 V',q:8000,u:'PC',p:6.75,dt:'25.11.2026',c:96.4},
+    {i:40,m:'CAP-MLCC-10U-0805',d:'MLCC 10 µF 25 V 0805',q:50000,u:'PC',p:0.92,dt:'25.11.2026',c:91.8}
+  ]};
+const fmt=n=>n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const qty=n=>n.toLocaleString('en-IN');
+
+const STEPS=[
+ {lane:'vendor',col:1,t:'PO received via email',sys:'Outlook',
+  d:'The purchase order arrives by email in the shared Outlook inbox, usually as a PDF attachment. Each PO can carry many line items. Nothing has touched SAP yet.',
+  pts:[['Input','PDF / scanned PO attached to the mail'],['Who sees it','Sales executive team']]},
+ {lane:'exec',col:2,t:'Executive uploads PO to Business Command Centre',sys:'Business Command Centre UI',
+  d:'The sales executive opens the Business Command Centre and uploads the PO file. This replaces typing the order into SAP by hand.',
+  pts:[['Action','Drag-and-drop or browse upload'],['Result','PO record created in Business Command Centre']]},
+ {lane:'Business Command Centre',col:3,t:'OCR extracts all fields',sys:'OCR engine',
+  d:'OCR reads the document and pulls out header fields (PO number, date, buyer, ship-to) and every line item (part, quantity, unit, price, delivery date).',
+  pts:[['Header','PO no., date, sold-to, ship-to'],['Items','Material, qty, UoM, price, req. date'],['Quality','Confidence score per field']]},
+ {lane:'Business Command Centre',col:4,t:'Fields shown & validated',sys:'Business Command Centre',
+  d:'All extracted fields are collected in the Business Command Centre screen. The executive can review low-confidence values before the PO moves on.',
+  pts:[['Checks','Mandatory fields, qty > 0, valid dates'],['Review','Low-confidence fields highlighted']]},
+ {lane:'approver',col:5,t:'Second person approves',sys:'Business Command Centre UI',
+  d:'A different person from the uploader opens the PO next to the PDF and approves it. Nothing goes to SAP before this. The Business Command Centre checks the PO again at the moment of approval, and any warning has to be accepted first.',
+  pts:[['Rule','The uploader cannot approve their own PO'],['Status','Needs review → Approved'],['Shortcut','POs with nothing flagged can be approved together']]},
+ {lane:'Business Command Centre',col:6,t:'CSV generated for the PO',sys:'Business Command Centre backend',
+  d:'The backend writes one CSV per approved PO, one row per line item, in the column layout SAP expects. The CSV is exposed on an HTTPS endpoint.',
+  pts:[['Format','One row per line item, header repeated'],['Exposure','HTTPS GET endpoint per PO'],['Status','Approved → Sent to SAP']]},
+ {lane:'sap',col:7,t:'SAP fetches CSV via HTTPS GET',sys:'SAP ↔ API',
+  d:'SAP calls the Business Command Centre API with an HTTPS GET and downloads the CSV for the PO. The transfer is initiated from the SAP side.',
+  pts:[['Call','GET /api/integration/sap/orders/{id}/csv'],['Security','HTTPS (TLS), API key or Basic login']]},
+ {lane:'sap',col:8,t:'SAP creates Sales Order',sys:'SAP SD',
+  d:'SAP reads the CSV and creates the Sales Order with all line items. SAP assigns the document number, VBELN.',
+  pts:[['Created','Header, partners, items, schedule lines'],['Key output','VBELN (Sales Order number)']]},
+ {lane:'sap',col:9,t:'SAP posts the SO number back',sys:'SAP → API',
+  d:'SAP makes a second, separate HTTPS call with the PO number and the new Sales Order number (VBELN). It is not the reply to the fetch.',
+  pts:[['Call','POST /api/integration/sap/po'],['Payload','PO number + VBELN']],ret:true},
+ {lane:'Business Command Centre',col:10,t:'Business Command Centre records the SO',sys:'Business Command Centre backend',
+  d:'The Business Command Centre finds the one order waiting under that PO number, stores the Sales Order number against it and sets the status to SO created. If the PO number matches no order, or two, nothing is applied and Operations is alerted.',
+  pts:[['Status','Sent to SAP → SO created'],['Also','Audit trail and a notification'],['Document','Sales Order PDF built from the record']],ret:true},
+ {lane:'exec',col:11,t:'Team views PO and Sales Order',sys:'Business Command Centre UI',
+  d:'The record shows the SO number and the Sales Order value, with the original purchase order and the Sales Order document in two tabs. The loop is closed without opening SAP.',
+  pts:[['Visible','PO ↔ SO number and value'],['Documents','Purchase order and Sales order PDFs']]},
+ {lane:'vendor',col:12,t:'SO is sent to the vendor',sys:'Email',
+  d:'The Sales Order number and the Sales Order document go back to the vendor, closing the loop that started with the PO email.',
+  pts:[['Document','Sales Order PDF'],['Reference','Quote the Sales Order number on all correspondence']]}
+];
+
+function stage(i){
+  const it=PO.items;
+  switch(i){
+  case 0: return `<div class="mail new"><small>From: purchase@arcadia-example.in · To: sales@millennium</small><b>PO ${PO.no} — ${it.length} line items</b><small>Arcadia Electronics (sample) · 09:42</small><span class="att">📎 PO_${PO.no}.pdf</span></div>
+     <div class="mail"><b>PO 7710-2291 — 9 line items</b><small>Sample sender B · 09:15</small></div>
+     <div class="mail"><b>Revised PO 33/LT/0418</b><small>Sample sender C · 08:51</small></div>`;
+  case 1: return `<div class="box"><div class="kv"><dt>File</dt><dd>PO_${PO.no}.pdf</dd><dt>Uploaded by</dt><dd>Sales executive</dd><dt>Status</dt><dd>Uploading…</dd></div></div>
+     <div class="bar"><span></span></div>`;
+  case 2: return `<div class="box"><div class="kv">
+      <dt>PO number</dt><dd>${PO.no} <span class="conf">99.6%</span></dd>
+      <dt>PO date</dt><dd>${PO.date} <span class="conf">99.2%</span></dd>
+      <dt>Buyer</dt><dd>Arcadia Electronics → ${PO.soldTo} <span class="conf">97.9%</span></dd>
+      <dt>Ship-to</dt><dd>${PO.shipTo} <span class="conf">95.1%</span></dd></div></div>
+     <div class="box" style="padding:0"><table><thead><tr><th>Item</th><th>Part</th><th class="r">Qty</th><th class="r">Conf.</th></tr></thead><tbody>
+     ${it.map(x=>`<tr><td>${x.i}</td><td class="mono">${x.m}</td><td class="r">${qty(x.q)}</td><td class="r"><span class="conf ${x.c<93?'low':''}">${x.c}%</span></td></tr>`).join('')}</tbody></table></div>`;
+  case 3: return `<div class="box" style="padding:0"><table><thead><tr><th>Item</th><th>Description</th><th class="r">Qty</th><th>UoM</th><th class="r">Price ₹</th><th>Req. date</th><th></th></tr></thead><tbody>
+     ${it.map(x=>`<tr><td>${x.i}</td><td>${x.d}</td><td class="r">${qty(x.q)}</td><td>${x.u}</td><td class="r">${fmt(x.p)}</td><td>${x.dt}</td><td style="color:var(--ok)">✓</td></tr>`).join('')}</tbody></table></div>
+     <div class="meta"><span class="badge">All mandatory fields present</span><span class="badge wait">Item 40 reviewed (91.8%)</span></div>`;
+  case 4: return `<div class="box"><div class="kv">
+      <dt>PO number</dt><dd>${PO.no}</dd>
+      <dt>Uploaded by</dt><dd>Sales executive</dd>
+      <dt>Approved by</dt><dd>Approver (a different person)</dd>
+      <dt>Checks</dt><dd>0 blocking · 0 warnings left to accept</dd>
+      <dt>Status</dt><dd>Needs review → Approved</dd></div></div>
+     <div class="meta"><span class="badge">Approved</span><span class="badge wait">Uploader cannot approve their own PO</span></div>`;
+  case 5: { const h='PO_NO,PO_DATE,SOLD_TO,SHIP_TO,ITEM,MATERIAL,QTY,UOM,PRICE,CURR,REQ_DATE';
+     const rows=it.map(x=>[PO.no,PO.date,PO.soldTo,'WE-2001',x.i,x.m,x.q,x.u,x.p.toFixed(2),'INR',x.dt].join(','));
+     return `<div class="kv"><dt>File</dt><dd>PO_${PO.no}.csv · ${it.length} rows</dd></div><div class="box"><pre class="csv"><span class="h">${h}</span>\n${rows.join('\n')}</pre></div>
+     <div class="meta"><span class="badge wait">Status: Sent to SAP · waiting for SAP</span></div>`;}
+  case 6: return `<div class="box http mono">
+     <div><span class="verb">GET</span> https://command-centre.example.local/api/integration/sap/orders/PO-${PO.no}/csv</div>
+     <div style="color:var(--muted)">Authorization: Basic ••••••  ·  Accept: text/csv</div>
+     <div>← <span class="status">200 OK</span> · Content-Type: text/csv · ${it.length} line items · 0.4 s</div></div>
+     <div class="kv"><dt>Initiated by</dt><dd>SAP (scheduled pull / on demand)</dd><dt>Transport</dt><dd>HTTPS (TLS 1.2+)</dd></div>`;
+  case 7: { const tot=it.reduce((s,x)=>s+x.q*x.p,0);
+     return `<div class="box"><div class="kv"><dt>Order type</dt><dd>Standard order</dd><dt>Sold-to</dt><dd>${PO.soldTo}</dd><dt>Cust. reference</dt><dd>${PO.no}</dd><dt>Items</dt><dd>${it.length} (10–40)</dd><dt>Net value</dt><dd>₹ ${fmt(tot)}</dd></div></div>
+     <div><div style="color:var(--muted);font-size:12.5px">Document number assigned (VBELN)</div><div class="big-so">${PO.so}</div></div>`;}
+  case 8: return `<div class="box http mono">
+     <div><span class="verb">POST</span> https://command-centre.example.local/api/integration/sap/po</div>
+     <div style="color:var(--muted)">Authorization: Basic ••••••  ·  Content-Type: application/json</div>
+     <pre class="csv">{
+  <span class="h">"PO_NUMBER"</span>: "${PO.no}",
+  <span class="h">"VBELN"</span>:     "${PO.so}"
+}</pre>
+     <div>← <span class="status">200 OK</span> · accepted, applied</div></div>
+     <div class="kv"><dt>Sent by</dt><dd>SAP, after it has created the order</dd><dt>Not</dt><dd>the reply to the CSV fetch: a second call</dd></div>`;
+  case 9: return `<div class="box"><div class="kv">
+      <dt>PO number</dt><dd>${PO.no}</dd>
+      <dt>Matched to</dt><dd>the one order waiting under this PO number</dd>
+      <dt>Status</dt><dd>Sent to SAP → SO created</dd>
+      <dt>Also</dt><dd>audit trail written · notification sent</dd></div></div>
+     <div><div style="color:var(--muted);font-size:12.5px">Sales Order number stored (VBELN)</div><div class="big-so">${PO.so}</div></div>
+     <div class="meta"><span class="badge">SO created</span><span class="badge">Sales Order document ready</span></div>`;
+  case 10: { const so=it.reduce((s,x)=>s+x.q*x.p,0);
+     return `<div class="box" style="padding:0"><table><thead><tr><th>PO no.</th><th>Vendor</th><th class="r">Items</th><th>SO no.</th><th class="r">SO value ₹</th><th>Status</th></tr></thead><tbody>
+     <tr><td class="mono">${PO.no}</td><td>Arcadia (sample)</td><td class="r">${it.length}</td><td class="mono" style="color:var(--c-sap);font-weight:600">${PO.so}</td><td class="r">${fmt(so)}</td><td><span class="badge">SO created</span></td></tr>
+     <tr><td class="mono">7710-2291</td><td>Vendor B (sample)</td><td class="r">9</td><td class="mono">0000412759</td><td class="r">—</td><td><span class="badge wait">Sent to SAP</span></td></tr></tbody></table></div>
+     <div class="meta"><span class="chip">Purchase order (PDF)</span><span class="chip">Sales order (PDF)</span></div>
+     <div style="color:var(--muted);font-size:12.5px">Both documents open from the same record, in two tabs.</div>`;}
+  case 11: return `<div class="mail new"><small>To: purchase@arcadia-example.in · Subject: Sales Order ${PO.so} against PO ${PO.no}</small>
+     <b>Sales Order ${PO.so}</b><small>Against your PO ${PO.no}. Please quote this number on all correspondence.</small>
+     <span class="att">📎 SO-${PO.so}.pdf</span></div>`;
+  }
+}
+
+const board=document.getElementById('board'), svg=document.getElementById('traces');
+LANES.forEach((l,r)=>{
+  const lane=document.createElement('div');lane.className='lane';lane.style.gridRow=r+1;board.appendChild(lane);
+  const lab=document.createElement('div');lab.className='lane-label';lab.style.gridRow=r+1;
+  lab.innerHTML=`<b><i style="background:var(${l.color})"></i>${l.name}</b><small>${l.sub}</small>`;board.appendChild(lab);
+});
+const nodes=STEPS.map((s,i)=>{
+  const r=LANES.findIndex(l=>l.key===s.lane), lc=LANES[r].color;
+  const b=document.createElement('button');b.className='node'+(s.lane==='sap'?' sap':'');
+  b.style.gridRow=r+1;b.style.gridColumn=s.col+1;b.id='node-'+i;
+  b.innerHTML=`<span class="n"><span><i style="background:var(${lc});display:inline-block;margin-right:5px"></i>STEP ${String(i+1).padStart(2,'0')}</span><span class="check">✓</span></span><span class="t">${s.t}</span>`;
+  b.addEventListener('click',()=>{go(i,false);pause();});
+  board.appendChild(b);return b;
+});
+const rail=document.getElementById('rail');
+STEPS.forEach(()=>rail.appendChild(document.createElement('span')));
+
+const NS='http://www.w3.org/2000/svg';let paths=[],pads=[],packet,halo;
+function drawTraces(){
+  svg.innerHTML='';paths=[];pads=[];
+  const br=board.getBoundingClientRect();
+  svg.setAttribute('viewBox',`0 0 ${br.width} ${br.height}`);
+  const box=n=>{const r=n.getBoundingClientRect();return{l:r.left-br.left,r:r.right-br.left,cy:r.top-br.top+r.height/2,t:r.top-br.top,b:r.bottom-br.top,cx:r.left-br.left+r.width/2};};
+  for(let i=0;i<STEPS.length-1;i++){
+    const a=box(nodes[i]),b=box(nodes[i+1]);
+    let d;
+    if(Math.abs(a.cy-b.cy)<2) d=`M${a.r},${a.cy} H${b.l}`;
+    else{const mx=(a.r+b.l)/2,dir=b.cy>a.cy?1:-1,rr=10;
+      d=`M${a.r},${a.cy} H${mx-rr} Q${mx},${a.cy} ${mx},${a.cy+rr*dir} V${b.cy-rr*dir} Q${mx},${b.cy} ${mx+rr},${b.cy} H${b.l}`;}
+    const p=document.createElementNS(NS,'path');p.setAttribute('d',d);p.setAttribute('class','tr'+(STEPS[i+1].ret?' ret':''));svg.appendChild(p);paths.push(p);
+    [[a.r,a.cy],[b.l,b.cy]].forEach(([x,y])=>{const c=document.createElementNS(NS,'circle');c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r',4);c.setAttribute('class','pad');svg.appendChild(c);pads.push({c,seg:i});});
+  }
+  halo=document.createElementNS(NS,'circle');halo.setAttribute('r',11);halo.setAttribute('class','packet-halo');halo.style.display='none';
+  packet=document.createElementNS(NS,'circle');packet.setAttribute('r',5.5);packet.setAttribute('class','packet');packet.style.display='none';
+  svg.appendChild(halo);svg.appendChild(packet);
+  paint();
+}
+
+let cur=0,playing=true,timer=null,raf=null;
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function speed(){return parseFloat(document.getElementById('spd').value)}
+function paint(){
+  nodes.forEach((n,i)=>{n.classList.toggle('done',i<cur);n.classList.toggle('active',i===cur);n.classList.toggle('future',i>cur);n.setAttribute('aria-current',i===cur?'step':'false');});
+  paths.forEach((p,i)=>p.classList.toggle('done',i<cur));
+  pads.forEach(({c,seg})=>c.classList.toggle('done',seg<cur));
+  [...rail.children].forEach((s,i)=>s.classList.toggle('done',i<=cur));
+}
+function render(){
+  const s=STEPS[cur],lane=LANES.find(l=>l.key===s.lane);
+  document.getElementById('detail').innerHTML=`<div class="meta"><span class="chip">Step ${cur+1} of ${STEPS.length}</span><span class="chip"><i style="background:var(${lane.color})"></i>${lane.name}</span><span class="chip">${s.sys}</span></div>
+    <h2>${s.t}</h2><p>${s.d}</p><ul>${s.pts.map(([k,v])=>`<li><b>${k}:</b> ${v}</li>`).join('')}</ul>`;
+  const st=document.getElementById('stage');st.style.animation='none';st.offsetHeight;st.style.animation='';
+  st.innerHTML=stage(cur);
+}
+function travel(seg,done){
+  const p=paths[seg];if(!p||reduce){done();return;}
+  const L=p.getTotalLength(),dur=900*speed(),t0=performance.now();
+  packet.style.display=halo.style.display='';
+  packet.style.fill=halo.style.fill=STEPS[seg+1].ret?'var(--c-sap)':'';
+  const step=now=>{const k=Math.min(1,(now-t0)/dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2,pt=p.getPointAtLength(e*L);
+    packet.setAttribute('cx',pt.x);packet.setAttribute('cy',pt.y);halo.setAttribute('cx',pt.x);halo.setAttribute('cy',pt.y);
+    if(k<1)raf=requestAnimationFrame(step);else{packet.style.display=halo.style.display='none';done();}};
+  raf=requestAnimationFrame(step);
+}
+function go(i,animate){
+  cancelAnimationFrame(raf);clearTimeout(timer);
+  if(packet)packet.style.display=halo.style.display='none';
+  if(animate&&i===cur+1){travel(cur,()=>{cur=i;paint();render();schedule();});}
+  else{cur=i;paint();render();schedule();}
+}
+function schedule(){
+  clearTimeout(timer);if(!playing)return;
+  const dwell=(cur===STEPS.length-1?4200:2600)*speed();
+  timer=setTimeout(()=>{ if(cur<STEPS.length-1)go(cur+1,true); else go(0,false); },dwell);
+}
+const playBtn=document.getElementById('play');
+function pause(){playing=false;clearTimeout(timer);playBtn.textContent='▶ Play';}
+function play(){playing=true;playBtn.textContent='❚❚ Pause';schedule();}
+playBtn.onclick=()=>playing?pause():play();
+document.getElementById('next').onclick=()=>{pause();if(cur<STEPS.length-1)go(cur+1,true);};
+document.getElementById('prev').onclick=()=>{pause();if(cur>0)go(cur-1,false);};
+document.getElementById('restart').onclick=()=>{go(0,false);play();};
+document.getElementById('spd').onchange=()=>schedule();
+document.addEventListener('keydown',e=>{if(e.target.tagName==='SELECT')return;
+  if(e.key==='ArrowRight'){e.preventDefault();document.getElementById('next').click();}
+  if(e.key==='ArrowLeft'){e.preventDefault();document.getElementById('prev').click();}
+  if(e.key===' '&&e.target===document.body){e.preventDefault();playBtn.click();}});
+
+if(reduce)pause();
+drawTraces();render();schedule();
+new ResizeObserver(()=>drawTraces()).observe(board);
+if(document.fonts)document.fonts.ready.then(drawTraces);
+</script>
+
+</body></html>

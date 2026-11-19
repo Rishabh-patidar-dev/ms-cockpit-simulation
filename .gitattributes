@@ -1,0 +1,8 @@
+# Shell scripts must keep LF endings; CRLF breaks them inside Linux containers.
+*.sh text eol=lf
+
+# PDFs are binary; line-ending normalisation corrupts their streams.
+*.pdf binary
+
+# The SAP team's test files are served byte for byte; git must not change their line endings.
+backend/test-files/** -text
