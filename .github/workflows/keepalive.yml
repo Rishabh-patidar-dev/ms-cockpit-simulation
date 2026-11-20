@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Ping health endpoint
         run: |
-          url="${{ vars.COCKPIT_URL || 'https://po-cockpit.onrender.com' }}/api/health"
+          url="${{ vars.COCKPIT_URL || 'https://bcc-outlook-intake.onrender.com' }}/api/health"
           echo "GET $url"
 
           # --max-time 180 because a cold start takes 40-60s and this workflow

@@ -28,10 +28,28 @@ export function LoginPage() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    // The free server sleeps when idle and takes up to a minute to wake. Until it answers, the proxy
+    // returns a gateway error (or no answer at all), so keep trying for a while instead of failing.
+    const deadline = Date.now() + 120_000;
     try {
-      await login(email, password);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not sign in. Check the API is running.');
+      for (;;) {
+        try {
+          await login(email, password);
+          return;
+        } catch (err) {
+          const waking = !(err instanceof ApiError) || err.status >= 502;
+          if (!waking) {
+            setError(err.message);
+            return;
+          }
+          if (Date.now() > deadline) {
+            setError('Could not sign in. The server did not wake up; try again in a minute.');
+            return;
+          }
+          setError('Waking up the server, this can take up to a minute…');
+          await new Promise<void>((r) => setTimeout(r, 4000));
+        }
+      }
     } finally {
       setBusy(false);
     }
