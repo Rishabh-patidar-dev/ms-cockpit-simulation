@@ -53,6 +53,22 @@ enum ActorType {
   SYSTEM
 }
 
+/// How a record arrived: uploaded by a person, or read from the Outlook intake mailbox.
+enum RecordSource {
+  UPLOAD
+  EMAIL
+}
+
+/// What the Outlook intake did with one email.
+enum IntakeOutcome {
+  /// Records are being created; a retry finishes the job.
+  IMPORTING
+  IMPORTED
+  NO_PDF
+  SENDER_NOT_ALLOWED
+  FAILED
+}
+
 model User {
   id                  String   @id @default(uuid())
   email               String   @unique
@@ -82,6 +98,11 @@ model PORecord {
 
   vendorHint String?
   notes      String?
+
+  source        RecordSource @default(UPLOAD)
+  /// The email this record came from, when source is EMAIL.
+  intakeEmailId String?
+  intakeEmail   IntakeEmail? @relation(fields: [intakeEmailId], references: [id])
 
   uploadedById String
   uploadedBy   User   @relation("uploader", fields: [uploadedById], references: [id])
@@ -353,6 +374,8 @@ enum NotificationKind {
   SO_CREATED
   /// Something wrong between the Business Command Centre and SAP that no single user caused.
   INTEGRATION_ALERT
+  /// A PO arrived in the Outlook intake mailbox and was turned into records.
+  EMAIL_PO_RECEIVED
 }
 
 enum DeliveryChannel {
@@ -421,4 +444,26 @@ model NotificationPreference {
   email  Boolean          @default(true)
 
   @@id([userId, kind])
+}
+
+// ---------------------------------------------------------------- Outlook email intake
+
+/// One email read from the intake mailbox folder, whatever became of it.
+model IntakeEmail {
+  id                String        @id @default(uuid())
+  /// The RFC 822 Message-ID. Unlike Graph's id it survives the mail being moved between folders.
+  internetMessageId String        @unique
+  graphMessageId    String
+  fromAddress       String
+  fromName          String?
+  subject           String?
+  receivedAt        DateTime
+  outcome           IntakeOutcome
+  detail            String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  records PORecord[]
+
+  @@index([createdAt])
 }

@@ -65,6 +65,9 @@ export interface PORecord {
   createdAt: string;
   uploadedBy: { id: string; name: string; email: string };
   vendorProfile: { id: string; name: string; version: number } | null;
+  /** How the record arrived: someone's upload, or an email to the intake mailbox. */
+  source?: RecordSource;
+  intakeEmail?: { fromAddress: string; fromName: string | null; subject: string | null; receivedAt: string } | null;
   sourceDocument: {
     originalFilename: string;
     byteSize: number;
@@ -211,7 +214,23 @@ export type NotificationKind =
   | 'RECORD_FAILED'
   | 'EXTRACTION_FAILED'
   | 'SO_CREATED'
-  | 'INTEGRATION_ALERT';
+  | 'INTEGRATION_ALERT'
+  | 'EMAIL_PO_RECEIVED';
+
+export type RecordSource = 'UPLOAD' | 'EMAIL';
+
+/** What the Outlook email intake last did. */
+export interface MailIntakeStatus {
+  enabled: boolean;
+  mailbox: string;
+  folder: string;
+  allowedSenders: string[];
+  pollSeconds: number;
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  lastResults: { internetMessageId: string; from: string; subject: string; outcome: string; records: string[]; detail: string | null }[];
+}
 
 export interface NotificationItem {
   id: string;
@@ -313,6 +332,8 @@ export interface WorklistRow {
   statusChangedAt: string;
   createdAt: string;
   uploadedBy: { id: string; name: string };
+  source?: RecordSource;
+  intakeEmail?: { fromAddress: string } | null;
   sourceDocument: { originalFilename: string; pageCount: number | null } | null;
   /** What the Sales Order is worth, once SAP has created it. */
   salesOrder?: { value: string; currency: string } | null;

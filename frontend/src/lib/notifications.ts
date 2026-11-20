@@ -8,4 +8,5 @@ export const KIND_TONE: Record<NotificationKind, string> = {
   EXTRACTION_FAILED: 't-crit',
   SO_CREATED: 't-ok',
   INTEGRATION_ALERT: 't-crit',
+  EMAIL_PO_RECEIVED: 't-info',
 };

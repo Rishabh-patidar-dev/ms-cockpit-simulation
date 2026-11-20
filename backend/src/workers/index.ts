@@ -6,6 +6,7 @@ import { writeAudit } from '../services/audit.js';
 import { deliverPending } from '../services/notifications/deliver.js';
 import { notifyIntegration } from '../services/notifications/notify.js';
 import { runExtractionForRecord } from '../services/extraction/index.js';
+import { runMailIntake } from '../services/mailIntake/intake.js';
 import { scanResultFolder, sweepSlaTimeouts } from '../services/sap/resultWatcher.js';
 import { checkOutboundWritable, submitToSap } from '../services/sap/outbound.js';
 
@@ -138,11 +139,18 @@ export function startWorkers() {
   loop('sla-sweep', 60_000, async () => {
     await sweepSlaTimeouts();
   });
+  // Outlook email intake: PO PDFs emailed to the intake mailbox become records.
+  if (env.MAIL_INTAKE_ENABLED) {
+    loop('mail-intake', env.MAIL_POLL_MS, async () => {
+      await runMailIntake();
+    });
+  }
   log.info(
     {
       extractionPollMs: env.EXTRACTION_POLL_MS,
       resultPollMs: env.SAP_RESULT_POLL_MS,
       provider: env.EXTRACTION_PROVIDER,
+      mailIntake: env.MAIL_INTAKE_ENABLED ? `${env.MAIL_MAILBOX} / ${env.MAIL_SOURCE_FOLDER}` : 'off',
     },
     'workers started',
   );

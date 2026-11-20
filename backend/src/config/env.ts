@@ -201,6 +201,29 @@ const schema = z.object({
    * either blocks SAP or can be talked round, so it is set deliberately, never guessed.
    */
   TRUST_PROXY: int(0),
+
+  // ---- Outlook email intake: PO PDFs emailed to one mailbox become records (Microsoft Graph, app-only).
+
+  /** Off until the Azure app registration exists and the values below are filled in. */
+  MAIL_INTAKE_ENABLED: bool(false),
+  /** Directory (tenant) ID, Application (client) ID and a client secret of the Entra app registration. */
+  MS_TENANT_ID: z.string().optional().default(''),
+  MS_CLIENT_ID: z.string().optional().default(''),
+  MS_CLIENT_SECRET: z.string().optional().default(''),
+  /** The mailbox read, e.g. hello@innovunglobal.com. */
+  MAIL_MAILBOX: z.string().optional().default(''),
+  /**
+   * The folder an Outlook rule moves PO mail into. Only this folder is read, so the rest of a shared
+   * mailbox is never touched. Folders are found by display name, at the top level or under the Inbox.
+   */
+  MAIL_SOURCE_FOLDER: z.string().default('BCC-POC'),
+  /** Where a mail goes once its PDFs are records. */
+  MAIL_DONE_FOLDER: z.string().default('Imported'),
+  /** Where a mail goes when nothing was imported from it: unknown sender, no PDF, an error. */
+  MAIL_ATTENTION_FOLDER: z.string().default('Needs attention'),
+  /** Comma-separated addresses or @domains allowed to send POs. Empty allows any sender. */
+  MAIL_ALLOWED_SENDERS: z.string().optional().default(''),
+  MAIL_POLL_MS: int(60_000),
 });
 
 const parsed = schema.safeParse(process.env);

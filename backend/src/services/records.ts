@@ -38,7 +38,12 @@ export const canApprove = (role: Role) => role === 'APPROVER' || role === 'ADMIN
 export async function createRecord(
   actor: Actor,
   file: { buffer: Buffer; originalname: string; mimetype: string },
-  meta: { vendorHint?: string; notes?: string } = {},
+  meta: {
+    vendorHint?: string;
+    notes?: string;
+    /** Set by the Outlook intake: the record came from this email, not from someone's upload. */
+    intakeEmailId?: string;
+  } = {},
 ) {
   // FR-1.2 / NFR-3.4 — validate by content, not by the filename extension.
   if (!looksLikePdf(file.buffer)) {
@@ -72,6 +77,7 @@ export async function createRecord(
         uploadedById: actor.id,
         vendorHint: meta.vendorHint?.trim() || null,
         notes: meta.notes?.trim() || null,
+        ...(meta.intakeEmailId ? { source: 'EMAIL' as const, intakeEmailId: meta.intakeEmailId } : {}),
         sourceDocument: {
           create: {
             originalFilename: file.originalname,
@@ -94,7 +100,7 @@ export async function createRecord(
     await writeAudit({
       recordId,
       eventType: 'RECORD_UPLOADED',
-      message: `Uploaded ${file.originalname} (${stored.byteSize} bytes, ${stored.pageCount ?? '?'} page(s))`,
+      message: `${meta.intakeEmailId ? 'Received by email' : 'Uploaded'} ${file.originalname} (${stored.byteSize} bytes, ${stored.pageCount ?? '?'} page(s))`,
       actorId: actor.id,
     });
 
@@ -746,6 +752,7 @@ const recordInclude = {
   header: { include: { lineItems: { orderBy: { lineNumber: 'asc' } } } },
   uploadedBy: { select: { id: true, name: true, email: true } },
   vendorProfile: { select: { id: true, name: true, version: true } },
+  intakeEmail: { select: { fromAddress: true, fromName: true, subject: true, receivedAt: true } },
 } satisfies Prisma.PORecordInclude;
 
 export async function getRecordOrThrow(recordId: string) {
@@ -889,6 +896,7 @@ export async function listRecords(filters: ListFilters) {
           },
         },
         uploadedBy: { select: { id: true, name: true } },
+        intakeEmail: { select: { fromAddress: true } },
       },
     }),
     prisma.pORecord.count({ where }),

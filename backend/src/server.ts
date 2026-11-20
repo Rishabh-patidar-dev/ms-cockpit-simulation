@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { prisma } from './db/client.js';
 import { logger } from './lib/logger.js';
+import { mailIntakeConfigured } from './services/mailIntake/intake.js';
 import { ensureDirectories } from './services/storage.js';
 import { startWorkers, stopWorkers } from './workers/index.js';
 
@@ -41,8 +42,20 @@ function assertSapApiConfigured() {
   }
 }
 
+function assertMailIntakeConfigured() {
+  const missing = env.MAIL_INTAKE_ENABLED ? mailIntakeConfigured() : [];
+  if (missing.length > 0) {
+    throw new Error(
+      `MAIL_INTAKE_ENABLED is true but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} empty.\n` +
+        '  Fill them in from the Entra app registration (DEPLOY.md "Outlook email intake"), or\n' +
+        '  set MAIL_INTAKE_ENABLED=false.',
+    );
+  }
+}
+
 async function main() {
   assertExtractionConfigured();
+  assertMailIntakeConfigured();
   assertSapApiConfigured();
   assertSapLogApiConfigured();
   await ensureDirectories();

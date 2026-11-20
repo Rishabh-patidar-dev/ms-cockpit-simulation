@@ -9,6 +9,8 @@ import { sapApiRouter } from './modules/sapApi/routes.js';
 import { sapCaptureRouter } from './modules/sapApi/capture.js';
 import { sapApiAuth } from './middleware/sapApiAuth.js';
 import { sapBodyErrors } from './middleware/sapBody.js';
+import { mailIntakeRouter } from './modules/mailIntake/routes.js';
+import { mailIntakeStatus } from './services/mailIntake/intake.js';
 import { notificationsRouter } from './modules/notifications/routes.js';
 import { recordsRouter } from './modules/records/routes.js';
 import { sapLogRouter } from './modules/sapLog/routes.js';
@@ -65,9 +67,13 @@ export function createApp() {
       ),
     ]);
     const ok = db.ok && outbound.ok && inbound.ok;
+    // The mailbox is shown in the header's badge but left out of `ok`: a mail problem must not
+    // make the host's health check restart a service that is otherwise working.
+    const mail = mailIntakeStatus();
+    const mailbox = mail.enabled ? { mailbox: mail.lastError ? { ok: false, error: mail.lastError } : { ok: true } } : {};
     res.status(ok ? 200 : 503).json({
       ok,
-      checks: { database: db, outboundFolder: outbound, inboundFolder: inbound },
+      checks: { database: db, outboundFolder: outbound, inboundFolder: inbound, ...mailbox },
       config: {
         extractionProvider: env.EXTRACTION_PROVIDER,
         csvLayout: env.CSV_LAYOUT,
@@ -88,6 +94,7 @@ export function createApp() {
   app.use('/api/auth', authRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/notifications', notificationsRouter);
+  app.use('/api/mail-intake', mailIntakeRouter);
   app.use('/api/integration/sap', sapApiRouter);
   app.use('/api/records', sapLogRouter);
   app.use('/api/records', recordsRouter);

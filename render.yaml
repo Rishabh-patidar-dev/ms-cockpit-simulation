@@ -91,6 +91,13 @@ services:
       - key: PUBLIC_BASE_URL
         value: https://po-cockpit.onrender.com
 
+      # ---- Outlook email intake ----
+      # PO PDFs emailed to this mailbox become records. Off until the Entra app registration exists:
+      # then add MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET and MAIL_ALLOWED_SENDERS in the dashboard
+      # (secrets do not belong in this file) and set MAIL_INTAKE_ENABLED=true. See DEPLOY.md "Outlook email intake".
+      - key: MAIL_MAILBOX
+        value: hello@innovunglobal.com
+
       # Apply pending migrations on boot (start.sh refuses to start if this fails).
       # A boot with nothing pending is a fast no-op; this keeps the Supabase schema
       # in step with the code without needing the connection string on a laptop.

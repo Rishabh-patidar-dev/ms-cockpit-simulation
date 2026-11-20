@@ -51,6 +51,12 @@ export const KINDS: Record<NotificationKind, KindInfo> = {
     roles: ['OPERATIONS', 'ADMIN'],
     uploader: false,
   },
+  EMAIL_PO_RECEIVED: {
+    label: 'A PO arrived by email',
+    description: 'A customer emailed a PO to the intake mailbox and it was added to the worklist.',
+    roles: ['UPLOADER', 'OPERATIONS', 'ADMIN'],
+    uploader: false,
+  },
 };
 
 export const ALL_KINDS = Object.keys(KINDS) as NotificationKind[];

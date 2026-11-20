@@ -5,6 +5,7 @@ import type {
   ChannelStatus,
   DashboardData,
   Inbox,
+  MailIntakeStatus,
   NotificationKind,
   NotificationPreference,
   Readiness,
@@ -103,6 +104,8 @@ export const api = {
 
   dashboard: (days: number) => request<DashboardData>(`/dashboard?days=${days}`),
 
+  mailIntakeStatus: () => request<MailIntakeStatus>('/mail-intake/status'),
+  runMailIntake: () => request<MailIntakeStatus>('/mail-intake/run', { method: 'POST' }),
   notifications: (limit = 30) => request<Inbox>(`/notifications?limit=${limit}`),
   markNotificationsRead: () => request<Inbox>('/notifications/read', { method: 'POST' }),
   notificationPrefs: () => request<{ preferences: NotificationPreference[] }>('/notifications/preferences'),

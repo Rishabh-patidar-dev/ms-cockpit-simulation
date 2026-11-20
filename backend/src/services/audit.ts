@@ -35,7 +35,8 @@ export type AuditEventType =
   | 'RESUBMITTED'
   | 'SAP_LOG_API_CALLED'
   | 'STATUS_CHANGED'
-  | 'CONFIG_CHANGED';
+  | 'CONFIG_CHANGED'
+  | 'RECORD_RECEIVED_BY_EMAIL';
 
 export interface AuditInput {
   recordId?: string | null;

@@ -66,6 +66,20 @@ export function WorklistPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
+  // The Outlook intake: emailed POs arrive on their own; the button checks the mailbox now.
+  const mail = useQuery({ queryKey: ['mail-intake'], queryFn: api.mailIntakeStatus, refetchInterval: 30000 });
+  const [mailNote, setMailNote] = useState<string | null>(null);
+  const checkMail = useMutation({
+    mutationFn: api.runMailIntake,
+    onSuccess: (s) => {
+      qc.setQueryData(['mail-intake'], s);
+      qc.invalidateQueries({ queryKey: ['records'] });
+      qc.invalidateQueries({ queryKey: ['counts'] });
+      setMailNote(s.lastError ? `Could not read the mailbox: ${s.lastError}` : null);
+    },
+    onError: (e) => setMailNote(e instanceof Error ? e.message : 'Could not check the mailbox.'),
+  });
+
   const active = VIEWS.find((v) => v.key === view)!;
 
   useEffect(() => {
@@ -345,6 +359,9 @@ export function WorklistPage() {
               <h1>Purchase orders</h1>
               <p className="cap">
                 Drop PDFs anywhere on this page &mdash; up to {MAX_BATCH} at once &mdash; or press <kbd>/</kbd> to search.
+                {mail.data?.enabled && (
+                  <> POs emailed to <b>{mail.data.mailbox}</b> are added automatically.</>
+                )}
               </p>
             </div>
             <div className="spacer" />
@@ -358,6 +375,20 @@ export function WorklistPage() {
                 // Copied out before the value is cleared: the FileList is live and empties with it.
                 onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ''; void takeFiles(picked); }}
               />
+              {mail.data?.enabled && user?.role !== 'APPROVER' && (
+                <button
+                  className="quiet sm"
+                  onClick={() => checkMail.mutate()}
+                  disabled={checkMail.isPending}
+                  title={
+                    mail.data.lastRunAt
+                      ? `Last checked ${ago(mail.data.lastRunAt)} ago${mail.data.lastError ? ` (failed: ${mail.data.lastError})` : ''}. The mailbox is also checked every ${mail.data.pollSeconds} s.`
+                      : `The mailbox is checked every ${mail.data.pollSeconds} s.`
+                  }
+                >
+                  {checkMail.isPending ? 'Checking mail…' : 'Check mail'}
+                </button>
+              )}
               <button
                 className="quiet sm"
                 onClick={exportCsv}
@@ -376,6 +407,7 @@ export function WorklistPage() {
         {uploadError && <div className="err" role="alert">{uploadError}</div>}
         {report && <BatchReport outcomes={report} onDismiss={() => setReport(null)} />}
         {exportError && <div className="err" role="alert">{exportError}</div>}
+        {mailNote && <div className="err" role="alert">{mailNote}</div>}
         {bulkError && <div className="err" role="alert">{bulkError}</div>}
         {bulkReport && (
           <BulkReport outcomes={bulkReport.outcomes} labels={bulkReport.labels} onDismiss={() => setBulkReport(null)} />
@@ -564,7 +596,10 @@ export function WorklistPage() {
                           )}
                         </td>
                       )}
-                      <td className="muted">{r.uploadedBy.name}</td>
+                      <td className="muted">
+                        {r.uploadedBy.name}
+                        {r.intakeEmail && <span className="sub" title="Received by email from this sender">✉ {r.intakeEmail.fromAddress}</span>}
+                      </td>
                       <td className="mono faint" title={r.correlationId}>{r.correlationId.slice(0, 11)}…</td>
                       <td className="num muted tnum">{ago(r.statusChangedAt)}</td>
                     </tr>

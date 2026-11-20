@@ -819,6 +819,7 @@ function NoReadingView({ d }: { d: RecordDetail }) {
               <dt>File</dt><dd>{r.sourceDocument.originalFilename}</dd>
               <dt>Pages</dt><dd>{r.sourceDocument.pageCount ?? 'unknown'}</dd>
               <dt>Uploaded by</dt><dd>{r.uploadedBy.name}</dd>
+              <EmailRows r={r} />
               <dt>Correlation id</dt><dd className="mono">{r.correlationId}</dd>
             </dl>
           </section>
@@ -851,6 +852,7 @@ function DraftView({ d }: { d: RecordDetail }) {
             <dt>Pages</dt><dd>{r.sourceDocument?.pageCount ?? 'unknown'}</dd>
             <dt>SHA-256</dt><dd className="mono faint">{r.sourceDocument?.contentHash.slice(0, 32)}…</dd>
             <dt>Uploaded by</dt><dd>{r.uploadedBy.name}</dd>
+            <EmailRows r={r} />
             <dt>Correlation id</dt><dd className="mono">{r.correlationId}</dd>
           </dl>
         </section>
@@ -943,5 +945,21 @@ function History({ d }: { d: RecordDetail }) {
         </>
       )}
     </section>
+  );
+}
+
+/** For a PO that arrived by email: who sent it, what the mail was called, and when it came. */
+function EmailRows({ r }: { r: RecordDetail['record'] }) {
+  const m = r.intakeEmail;
+  if (!m) return null;
+  return (
+    <>
+      <dt>Received by email</dt>
+      <dd>
+        {m.fromName ? `${m.fromName} <${m.fromAddress}>` : m.fromAddress}
+        <span className="sub">{new Date(m.receivedAt).toLocaleString()}</span>
+      </dd>
+      <dt>Email subject</dt><dd>{m.subject || <span className="faint">(no subject)</span>}</dd>
+    </>
   );
 }

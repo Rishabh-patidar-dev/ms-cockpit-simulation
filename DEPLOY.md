@@ -224,6 +224,35 @@ messages rather than losing them.
 I could test the email and Teams paths here against stand-in servers (real SMTP, real HTTP), but
 not against Microsoft 365 or a real Teams tenant — the test button is how you confirm yours.
 
+## Outlook email intake (optional)
+
+POs emailed to **hello@innovunglobal.com** become records on their own: the PDF is read by Gemini and lands in **Needs review**, uploaded by "Email intake", so an approver still checks it. The app reads **one folder** of the mailbox, never the rest, and only takes mail from the senders you list.
+
+**In Outlook (the mailbox owner):**
+
+1. Create three folders: `BCC-POC`, `Imported`, `Needs attention` (top level, or under the Inbox).
+2. Add a rule (Settings, Mail, Rules): *From* the customer addresses (or *Subject includes* "PO") **and** *Has attachment*, then *Move to* `BCC-POC`. For a demo, your own address is enough.
+
+**In Microsoft Entra (needs a Microsoft 365 admin):**
+
+3. entra.microsoft.com, App registrations, New registration: name "Business Command Centre Mail Intake", *Single tenant*, no redirect URI. Copy the **Application (client) ID** and **Directory (tenant) ID**.
+4. Certificates & secrets, New client secret (24 months). Copy the **Value** once and put it straight into Render. Do not paste it into chats or email. Note its expiry date: the intake stops when it expires.
+5. API permissions, Add, Microsoft Graph, **Application permissions**, `Mail.ReadWrite`, then **Grant admin consent**. (ReadWrite, because the app moves handled mail out of the folder.)
+6. Restrict the app to this one mailbox. Without this step, the same secret can read every mailbox in the company. In Exchange Online PowerShell (`Connect-ExchangeOnline` as an admin):
+   ```powershell
+   New-ApplicationAccessPolicy -AppId <client id> -PolicyScopeGroupId hello@innovunglobal.com -AccessRight RestrictAccess -Description "Business Command Centre mail intake"
+   Test-ApplicationAccessPolicy -Identity hello@innovunglobal.com -AppId <client id>   # AccessCheckResult: Granted
+   ```
+   The policy can take up to an hour to apply. (Microsoft's newer "RBAC for Applications" does the same job.)
+
+**In Render (Environment):**
+
+7. Add `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MAIL_ALLOWED_SENDERS` (e.g. `pavan@millenniumsemi.com,@customer.com`; empty allows anyone) and then `MAIL_INTAKE_ENABLED=true`. `MAIL_MAILBOX` is already in `render.yaml`. The folder names can be changed with `MAIL_SOURCE_FOLDER`, `MAIL_DONE_FOLDER` and `MAIL_ATTENTION_FOLDER`. The service refuses to start if the intake is on and a value is missing.
+
+**Check it:** email a sample PO from an allowed address. Within about a minute (`MAIL_POLL_MS`, default 60 s; **Check mail** on the worklist checks at once) it appears in the worklist with the sender under "Uploaded by", and the mail moves to `Imported`. A mail from an unlisted sender, or with no PDF, goes to `Needs attention` untouched. Sign-in or permission problems show in the header badge ("mailbox" failing), in the bell for Operations and Admin, and in the Render logs (`mail-intake`), each with the setting to check.
+
+Rules worth knowing: every PDF attachment in a mail becomes its own record (up to 50 per mail); other attachments are ignored; a PDF identical to one already in the system stays a **draft**, as with a drag-and-drop upload; a mail is never imported twice, even if it is moved back into the folder.
+
 ## Limits you must know
 
 **The disk is ephemeral.** Render's free plan has no persistent volume, so on every

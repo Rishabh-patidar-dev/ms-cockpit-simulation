@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
 
@@ -94,6 +95,19 @@ async function main() {
       update: { name: user.name, role: user.role },
     });
   }
+
+  // The Outlook intake's uploader. A password nobody knows: it is named on records, it never signs in.
+  // The app makes it on first use too (services/mailIntake/intake.ts), so this is a convenience.
+  await prisma.user.upsert({
+    where: { email: 'email-intake@cockpit.local' },
+    create: {
+      email: 'email-intake@cockpit.local',
+      name: 'Email intake',
+      role: 'UPLOADER',
+      passwordHash: await bcrypt.hash(randomBytes(32).toString('hex'), 10),
+    },
+    update: {},
+  });
 
   for (const profile of PROFILES) {
     await prisma.vendorProfile.upsert({
