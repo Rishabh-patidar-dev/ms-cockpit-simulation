@@ -9,6 +9,16 @@ export interface GraphConfig {
   clientId: string;
   clientSecret: string;
   mailbox: string;
+  /**
+   * Delegated sign-in ("Connect Outlook"): the mailbox is read as the person who signed in, through
+   * /me. Without it the app signs in as itself (client credentials) and reads /users/{mailbox}.
+   */
+  tokens?: TokenProvider;
+}
+
+/** Hands out access tokens for a signed-in user. `fresh` asks for a new one, the old one was refused. */
+export interface TokenProvider {
+  accessToken(fresh?: boolean): Promise<string>;
 }
 
 /** A failure talking to Microsoft, already worded for the person who has to fix it. */
@@ -47,10 +57,11 @@ export class GraphClient {
   ) {}
 
   private get mailboxPath() {
-    return `/users/${encodeURIComponent(this.cfg.mailbox)}`;
+    return this.cfg.tokens ? '/me' : `/users/${encodeURIComponent(this.cfg.mailbox)}`;
   }
 
-  private async accessToken(): Promise<string> {
+  private async accessToken(fresh = false): Promise<string> {
+    if (this.cfg.tokens) return this.cfg.tokens.accessToken(fresh);
     // Renewed a minute early so a token never expires between being read and being used.
     if (this.token && this.token.expiresAt - 60_000 > Date.now()) return this.token.value;
     const res = await this.http(`https://login.microsoftonline.com/${encodeURIComponent(this.cfg.tenantId)}/oauth2/v2.0/token`, {
@@ -84,8 +95,10 @@ export class GraphClient {
   /** One Graph request: retries throttling and outages, signs in again once if the token is refused. */
   private async request(path: string, init: { method?: string; body?: unknown; raw?: boolean } = {}): Promise<Response> {
     let reauthed = false;
+    let fresh = false;
     for (let attempt = 1; ; attempt++) {
-      const token = await this.accessToken();
+      const token = await this.accessToken(fresh);
+      fresh = false;
       const res = await this.http(`${GRAPH}${path}`, {
         method: init.method ?? 'GET',
         headers: {
@@ -99,6 +112,7 @@ export class GraphClient {
       if (res.status === 401 && !reauthed) {
         reauthed = true;
         this.token = null;
+        fresh = true;
         continue;
       }
       if (RETRYABLE.has(res.status) && attempt < MAX_TRIES) {
@@ -112,7 +126,7 @@ export class GraphClient {
       const body = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string } };
       const code = body.error?.code ?? `HTTP_${res.status}`;
       const said = body.error?.message ?? res.statusText;
-      throw new GraphError(explain(res.status, code, said, this.cfg.mailbox), res.status, code);
+      throw new GraphError(explain(res.status, code, said, this.cfg.mailbox, !!this.cfg.tokens), res.status, code);
     }
   }
 
@@ -185,7 +199,10 @@ export interface GraphAttachmentInfo {
 }
 
 /** Graph's errors name the symptom; this names the likely cause and where to fix it. */
-function explain(status: number, code: string, said: string, mailbox: string): string {
+function explain(status: number, code: string, said: string, mailbox: string, delegated: boolean): string {
+  if (delegated && (status === 403 || code === 'ErrorAccessDenied')) {
+    return `Microsoft refused access to the mailbox (${code}: ${said}). Check that the app has the delegated Graph permission Mail.ReadWrite, then click "Connect Outlook" again.`;
+  }
   if (status === 403 || code === 'ErrorAccessDenied' || code === 'Authorization_RequestDenied') {
     return `Microsoft refused access to the mailbox ${mailbox} (${code}: ${said}). Check that the app has the Graph application permission Mail.ReadWrite with admin consent granted, and that the Exchange application access policy includes this mailbox.`;
   }

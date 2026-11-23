@@ -94,7 +94,8 @@ services:
       # ---- Outlook email intake ----
       # PO PDFs emailed to this mailbox become records. Off until the Entra app registration exists:
       # then add MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET and MAIL_ALLOWED_SENDERS in the dashboard
-      # (secrets do not belong in this file) and set MAIL_INTAKE_ENABLED=true. See DEPLOY.md "Outlook email intake".
+      # (secrets do not belong in this file) and set MAIL_INTAKE_ENABLED=true; then an admin clicks
+      # "Connect Outlook" on the worklist (MAIL_AUTH_MODE=delegated, the default). See DEPLOY.md "Outlook email intake".
       - key: MAIL_MAILBOX
         value: hello@innovunglobal.com
 

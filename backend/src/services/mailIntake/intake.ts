@@ -8,6 +8,7 @@ import { writeAudit } from '../audit.js';
 import { notify, notifyIntegration } from '../notifications/notify.js';
 import { createRecord, publishRecord, type Actor } from '../records.js';
 import { looksLikePdf } from '../storage.js';
+import { mailConnection, NOT_CONNECTED, storedTokens } from './delegated.js';
 import { GraphMailSource, type MailMessage, type MailSource } from './source.js';
 
 const log = childLogger('mail-intake');
@@ -276,6 +277,10 @@ export function mailIntakeConfigured(): string[] {
 
 export interface IntakeStatus {
   enabled: boolean;
+  /** delegated: read as the person who clicked "Connect Outlook"; app: the app's own permission. */
+  authMode: 'delegated' | 'app';
+  /** Who "Connect Outlook" signed in as (delegated only); null until someone has. */
+  connection: { account: string; connectedAt: string } | null;
   mailbox: string;
   folder: string;
   allowedSenders: string[];
@@ -286,7 +291,8 @@ export interface IntakeStatus {
   lastResults: MailResult[];
 }
 
-const state: Omit<IntakeStatus, 'enabled' | 'mailbox' | 'folder' | 'allowedSenders' | 'pollSeconds'> = {
+const state: Omit<IntakeStatus, 'enabled' | 'authMode' | 'mailbox' | 'folder' | 'allowedSenders' | 'pollSeconds'> = {
+  connection: null,
   lastRunAt: null,
   lastSuccessAt: null,
   lastError: null,
@@ -308,10 +314,33 @@ export function runMailIntake(): Promise<MailResult[]> {
   return inFlight;
 }
 
+/** Re-reads who "Connect Outlook" signed in as, for the status shown in the app. */
+export async function refreshMailConnection(): Promise<void> {
+  if (env.MAIL_AUTH_MODE !== 'delegated') return;
+  const c = await mailConnection();
+  state.connection = c ? { account: c.account, connectedAt: c.connectedAt.toISOString() } : null;
+}
+
+/** After "Connect Outlook" or a disconnect: forget the cached folders and errors, and look again. */
+export async function mailConnectionChanged(): Promise<void> {
+  source = null;
+  state.lastError = null;
+  await refreshMailConnection();
+}
+
 async function onePass(): Promise<MailResult[]> {
   state.lastRunAt = new Date().toISOString();
+  if (env.MAIL_AUTH_MODE === 'delegated') {
+    await refreshMailConnection().catch(() => undefined);
+    // Not an outage: nobody has connected yet. Say so on the status, without raising alerts every minute.
+    if (!state.connection) {
+      state.lastError = NOT_CONNECTED;
+      return [];
+    }
+  }
   try {
     source ??= new GraphMailSource({
+      tokens: env.MAIL_AUTH_MODE === 'delegated' ? storedTokens : undefined,
       tenantId: env.MS_TENANT_ID,
       clientId: env.MS_CLIENT_ID,
       clientSecret: env.MS_CLIENT_SECRET,
@@ -343,6 +372,7 @@ async function onePass(): Promise<MailResult[]> {
 export function mailIntakeStatus(): IntakeStatus {
   return {
     enabled: env.MAIL_INTAKE_ENABLED,
+    authMode: env.MAIL_AUTH_MODE,
     mailbox: env.MAIL_MAILBOX,
     folder: env.MAIL_SOURCE_FOLDER,
     allowedSenders: env.MAIL_ALLOWED_SENDERS.split(',')

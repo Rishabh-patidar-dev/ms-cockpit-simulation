@@ -222,6 +222,9 @@ export type RecordSource = 'UPLOAD' | 'EMAIL';
 /** What the Outlook email intake last did. */
 export interface MailIntakeStatus {
   enabled: boolean;
+  /** delegated: read as the person who clicked "Connect Outlook"; app: the app's own permission. */
+  authMode: 'delegated' | 'app';
+  connection: { account: string; connectedAt: string } | null;
   mailbox: string;
   folder: string;
   allowedSenders: string[];

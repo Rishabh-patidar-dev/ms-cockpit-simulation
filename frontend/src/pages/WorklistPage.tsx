@@ -66,6 +66,7 @@ export function WorklistPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
+  const { user } = useAuth();
   // The Outlook intake: emailed POs arrive on their own; the button checks the mailbox now.
   const mail = useQuery({ queryKey: ['mail-intake'], queryFn: api.mailIntakeStatus, refetchInterval: 30000 });
   const [mailNote, setMailNote] = useState<string | null>(null);
@@ -79,6 +80,29 @@ export function WorklistPage() {
     },
     onError: (e) => setMailNote(e instanceof Error ? e.message : 'Could not check the mailbox.'),
   });
+
+  // "Connect Outlook": off to Microsoft's sign-in page, which sends the browser back to /?mail=...
+  const connectOutlook = useMutation({
+    mutationFn: api.connectOutlook,
+    onSuccess: ({ url }) => window.location.assign(url),
+    onError: (e) => setMailNote(e instanceof Error ? e.message : 'Could not start the Outlook sign-in.'),
+  });
+  const canConnect = user?.role === 'ADMIN' || user?.role === 'OPERATIONS';
+  const mailNeedsConnect = !!mail.data?.enabled && mail.data.authMode === 'delegated' &&
+    (!mail.data.connection || /Connect Outlook/.test(mail.data.lastError ?? ''));
+  const [connectResult] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    const outcome = q.get('mail');
+    return outcome === 'connected' || outcome === 'error' ? { ok: outcome === 'connected', detail: q.get('detail') ?? '' } : null;
+  });
+  const [connectNote, setConnectNote] = useState(connectResult);
+  useEffect(() => {
+    if (!connectResult) return;
+    const q = new URLSearchParams(window.location.search);
+    q.delete('mail');
+    q.delete('detail');
+    window.history.replaceState(null, '', `${window.location.pathname}${q.size ? `?${q}` : ''}`);
+  }, [connectResult]);
 
   const active = VIEWS.find((v) => v.key === view)!;
 
@@ -176,7 +200,6 @@ export function WorklistPage() {
   // Approving from the list. Approvers only, and only in Needs review, where the question
   // "does this one need looking at?" is the whole point. The server decides what is ready and
   // checks again when it is asked to approve; this just shows its answer.
-  const { user } = useAuth();
   const canBulk = (user?.role === 'APPROVER' || user?.role === 'ADMIN') && view === 'review';
   const reviewIds = useMemo(
     () => rows.filter((r) => r.status === 'NEEDS_REVIEW').map((r) => r.id).slice(0, READINESS_MAX),
@@ -359,8 +382,11 @@ export function WorklistPage() {
               <h1>Purchase orders</h1>
               <p className="cap">
                 Drop PDFs anywhere on this page &mdash; up to {MAX_BATCH} at once &mdash; or press <kbd>/</kbd> to search.
-                {mail.data?.enabled && (
+                {mail.data?.enabled && !mailNeedsConnect && (
                   <> POs emailed to <b>{mail.data.mailbox}</b> are added automatically.</>
+                )}
+                {mailNeedsConnect && (
+                  <> Outlook is not connected{canConnect ? '' : ' yet; an admin connects it'}.</>
                 )}
               </p>
             </div>
@@ -375,7 +401,17 @@ export function WorklistPage() {
                 // Copied out before the value is cleared: the FileList is live and empties with it.
                 onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ''; void takeFiles(picked); }}
               />
-              {mail.data?.enabled && user?.role !== 'APPROVER' && (
+              {mailNeedsConnect && canConnect && (
+                <button
+                  className="quiet sm"
+                  onClick={() => connectOutlook.mutate()}
+                  disabled={connectOutlook.isPending}
+                  title={`Sign in once as ${mail.data?.mailbox || 'the intake mailbox'}, so emailed POs can be read`}
+                >
+                  {connectOutlook.isPending ? 'Opening Microsoft…' : 'Connect Outlook'}
+                </button>
+              )}
+              {mail.data?.enabled && !mailNeedsConnect && user?.role !== 'APPROVER' && (
                 <button
                   className="quiet sm"
                   onClick={() => checkMail.mutate()}
@@ -408,6 +444,13 @@ export function WorklistPage() {
         {report && <BatchReport outcomes={report} onDismiss={() => setReport(null)} />}
         {exportError && <div className="err" role="alert">{exportError}</div>}
         {mailNote && <div className="err" role="alert">{mailNote}</div>}
+        {connectNote && (
+          <div className={connectNote.ok ? 'notice t-ok' : 'err'} role={connectNote.ok ? 'status' : 'alert'} onClick={() => setConnectNote(null)}>
+            {connectNote.ok
+              ? `Outlook connected as ${connectNote.detail}. POs emailed there are now picked up within a minute.`
+              : `Outlook was not connected: ${connectNote.detail}`}
+          </div>
+        )}
         {bulkError && <div className="err" role="alert">{bulkError}</div>}
         {bulkReport && (
           <BulkReport outcomes={bulkReport.outcomes} labels={bulkReport.labels} onDismiss={() => setBulkReport(null)} />

@@ -233,6 +233,42 @@ POs emailed to **hello@innovunglobal.com** become records on their own: the PDF 
 1. Create three folders: `BCC-POC`, `Imported`, `Needs attention` (top level, or under the Inbox).
 2. Add a rule (Settings, Mail, Rules): *From* the customer addresses (or *Subject includes* "PO") **and** *Has attachment*, then *Move to* `BCC-POC`. For a demo, your own address is enough.
 
+**In Microsoft Entra** (entra.microsoft.com, App registrations):
+
+3. New registration: name "Business Command Centre Mail Intake", *Single tenant*. Copy the **Application (client) ID** and **Directory (tenant) ID**.
+4. Certificates & secrets, New client secret (24 months). Copy the **Value** once and put it straight into Render. Do not paste it into chats or email. Note its expiry date: the intake stops when it expires.
+5. Choose how the app gets into the mailbox (`MAIL_AUTH_MODE`):
+   - **`delegated` (default; no Global Administrator needed).** API permissions, Add, Microsoft Graph, **Delegated permissions**: `Mail.ReadWrite` and `offline_access` (plus the default `User.Read`). Authentication, Add a platform, **Web**, redirect URI `https://<the site>/api/mail-intake/oauth/callback` (the Vercel address when the frontend is on Vercel); leave the implicit-flow token boxes unticked. Grant admin consent if the button lets you; otherwise the mailbox owner approves it at sign-in. Later, an Admin or Operations user clicks **Connect Outlook** on the worklist and signs in **as the intake mailbox**; a different Microsoft account is refused. The app can then read only that mailbox. Use this where Microsoft 365 is bought through a reseller such as GoDaddy, which keeps the Global Administrator role to itself.
+   - **`app`.** API permissions, Microsoft Graph, **Application permissions**, `Mail.ReadWrite`, then **Grant admin consent** (Global Administrator or Privileged Role Administrator only). Then restrict the app to this one mailbox; without that, the same secret can read every mailbox in the company. In Exchange Online PowerShell (`Connect-ExchangeOnline` as an admin):
+     ```powershell
+     New-ApplicationAccessPolicy -AppId <client id> -PolicyScopeGroupId hello@innovunglobal.com -AccessRight RestrictAccess -Description "Business Command Centre mail intake"
+     Test-ApplicationAccessPolicy -Identity hello@innovunglobal.com -AppId <client id>   # AccessCheckResult: Granted
+     ```
+     The policy can take up to an hour to apply.
+
+**In Render (Environment):**
+
+6. Add `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MAIL_MAILBOX`, `MAIL_ALLOWED_SENDERS` (e.g. `pavan@millenniumsemi.com,@customer.com`; empty allows anyone) and then `MAIL_INTAKE_ENABLED=true`. The folder names can be changed with `MAIL_SOURCE_FOLDER`, `MAIL_DONE_FOLDER` and `MAIL_ATTENTION_FOLDER`. The service refuses to start if the intake is on and a value is missing.
+7. Delegated only: sign in to the app as an Admin, click **Connect Outlook**, sign in to Microsoft as the intake mailbox and accept. The worklist then says "POs emailed to … are added automatically". The sign-in is kept (encrypted with a key from `JWT_SECRET`) and renews itself while the intake runs; if it is withdrawn (password reset, sessions revoked), the button comes back and the header badge says so. Changing `JWT_SECRET` also means connecting again.
+
+**Check it:** sign in as `admin@cockpit.local`, open **Notifications** (the bell > *All notifications
+& settings*) and press **Send me a test notification**. The page also shows, for Operations and
+administrators, how many emails and Teams messages went out in the last 24 hours and the last error.
+Delivery is retried five times with growing pauses, so a mail server that is briefly down delays
+messages rather than losing them.
+
+I could test the email and Teams paths here against stand-in servers (real SMTP, real HTTP), but
+not against Microsoft 365 or a real Teams tenant — the test button is how you confirm yours.
+
+## Outlook email intake (optional)
+
+POs emailed to **hello@innovunglobal.com** become records on their own: the PDF is read by Gemini and lands in **Needs review**, uploaded by "Email intake", so an approver still checks it. The app reads **one folder** of the mailbox, never the rest, and only takes mail from the senders you list.
+
+**In Outlook (the mailbox owner):**
+
+1. Create three folders: `BCC-POC`, `Imported`, `Needs attention` (top level, or under the Inbox).
+2. Add a rule (Settings, Mail, Rules): *From* the customer addresses (or *Subject includes* "PO") **and** *Has attachment*, then *Move to* `BCC-POC`. For a demo, your own address is enough.
+
 **In Microsoft Entra (needs a Microsoft 365 admin):**
 
 3. entra.microsoft.com, App registrations, New registration: name "Business Command Centre Mail Intake", *Single tenant*, no redirect URI. Copy the **Application (client) ID** and **Directory (tenant) ID**.

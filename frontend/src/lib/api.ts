@@ -106,6 +106,9 @@ export const api = {
 
   mailIntakeStatus: () => request<MailIntakeStatus>('/mail-intake/status'),
   runMailIntake: () => request<MailIntakeStatus>('/mail-intake/run', { method: 'POST' }),
+  connectOutlook: () =>
+    request<{ url: string }>('/mail-intake/oauth/start', { method: 'POST', body: JSON.stringify({ origin: window.location.origin }) }),
+  disconnectOutlook: () => request<MailIntakeStatus>('/mail-intake/connection', { method: 'DELETE' }),
   notifications: (limit = 30) => request<Inbox>(`/notifications?limit=${limit}`),
   markNotificationsRead: () => request<Inbox>('/notifications/read', { method: 'POST' }),
   notificationPrefs: () => request<{ preferences: NotificationPreference[] }>('/notifications/preferences'),

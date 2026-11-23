@@ -467,3 +467,15 @@ model IntakeEmail {
 
   @@index([createdAt])
 }
+
+/// The Outlook sign-in the intake reads the mailbox with (delegated access, "Connect Outlook").
+/// One row. The refresh token is encrypted with a key derived from JWT_SECRET.
+model MailConnection {
+  id            String   @id @default("default")
+  /// The Microsoft account that signed in, e.g. rishabh.p@innovunglobal.com.
+  account       String
+  refreshToken  String
+  connectedById String?
+  connectedAt   DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

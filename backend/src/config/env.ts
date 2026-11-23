@@ -202,7 +202,7 @@ const schema = z.object({
    */
   TRUST_PROXY: int(0),
 
-  // ---- Outlook email intake: PO PDFs emailed to one mailbox become records (Microsoft Graph, app-only).
+  // ---- Outlook email intake: PO PDFs emailed to one mailbox become records (Microsoft Graph).
 
   /** Off until the Azure app registration exists and the values below are filled in. */
   MAIL_INTAKE_ENABLED: bool(false),
@@ -224,6 +224,18 @@ const schema = z.object({
   /** Comma-separated addresses or @domains allowed to send POs. Empty allows any sender. */
   MAIL_ALLOWED_SENDERS: z.string().optional().default(''),
   MAIL_POLL_MS: int(60_000),
+  /**
+   * How the app gets into the mailbox.
+   * delegated: someone signs in once with "Connect Outlook" (Graph delegated Mail.ReadWrite). Works
+   *   where nobody can approve an application permission, e.g. a GoDaddy-run Microsoft 365.
+   * app: client credentials with the application permission Mail.ReadWrite (needs a Global Administrator).
+   */
+  MAIL_AUTH_MODE: z.enum(['delegated', 'app']).default('delegated'),
+  /**
+   * The sign-in return address registered in Entra (Authentication > Web). Empty: the address the
+   * browser came from + /api/mail-intake/oauth/callback.
+   */
+  MAIL_OAUTH_REDIRECT_URI: z.string().optional().default(''),
 });
 
 const parsed = schema.safeParse(process.env);
