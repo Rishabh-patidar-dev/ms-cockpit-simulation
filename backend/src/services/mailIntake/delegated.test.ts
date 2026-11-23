@@ -81,7 +81,7 @@ describe('authorizeUrl', () => {
     expect(d.readState(url.searchParams.get('state')!)?.uid).toBe('u1');
   });
   it('uses the configured return address when there is one', () => {
-    env.MAIL_OAUTH_REDIRECT_URI = 'https://fixed.example/cb';
+    Object.assign(env, { MAIL_OAUTH_REDIRECT_URI: 'https://fixed.example/cb' });
     expect(d.redirectUriFor('https://anything.example')).toBe('https://fixed.example/cb');
   });
 });
