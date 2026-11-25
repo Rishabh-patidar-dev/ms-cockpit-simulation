@@ -9,6 +9,7 @@ import { PdfPane } from '../components/PdfPane';
 import { StatusBadge } from '../components/StatusBadge';
 import { LifecycleRail } from '../components/LifecycleRail';
 import { SapLogPanel } from '../components/SapLogPanel';
+import { SapLinkPanel } from '../components/SapLinkPanel';
 import { statusLabel } from '../lib/status';
 import { worklistHref } from '../lib/worklistState';
 import type { FieldProvenance, RecordDetail } from '../lib/types';
@@ -428,6 +429,8 @@ export function RecordPage() {
             />
 
             {r.status === 'SO_CREATED' && <SapLogPanel recordId={r.id} />}
+
+            {user?.role !== 'UPLOADER' && <SapLinkPanel d={d} />}
 
             <History d={d} />
           </div>
