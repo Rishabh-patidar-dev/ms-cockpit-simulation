@@ -57,7 +57,7 @@ async function detailResponse(id: string) {
       sapApiPublicUrl: env.SAP_API_PUBLIC_URL,
       renderExternalUrl: env.RENDER_EXTERNAL_URL,
       publicBaseUrl: env.PUBLIC_BASE_URL,
-      apiKeySet: Boolean(env.SAP_API_KEY),
+      apiKey: env.SAP_API_KEY,
       apiUser: env.SAP_API_USER,
       simulatorRunning: env.RUN_SAP_SIMULATOR,
     }),

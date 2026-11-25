@@ -80,6 +80,29 @@ export function keyMatches(presented: string | null, expected: string): boolean 
   return crypto.timingSafeEqual(h(presented), h(expected));
 }
 
+/**
+ * The code in a tap-to-download link: an HMAC of one order's correlation ID under SAP_API_KEY.
+ * It opens that order's CSV only, cannot be turned into another order's code without the key,
+ * and every code stops working when the key is replaced.
+ */
+export function orderCsvToken(correlationId: string, key: string): string {
+  return crypto.createHmac('sha256', key).update(`order-csv:${correlationId.trim().toUpperCase()}`).digest('hex').slice(0, 40);
+}
+
+const ORDER_CSV_PATH = /^\/orders\/([^/]+)\/csv\/?$/;
+
+/** A GET for one order's CSV carrying that order's own code (?token=…). */
+export function orderTokenMatches(req: Pick<Request, 'method' | 'path' | 'query'>, key: string): boolean {
+  if (req.method !== 'GET' || !key) return false;
+  const m = ORDER_CSV_PATH.exec(req.path);
+  const token = req.query.token;
+  if (!m || typeof token !== 'string' || !token) return false;
+  const expected = orderCsvToken(decodeURIComponent(m[1]!), key);
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 // Ten wrong keys from one address in ten minutes and it is turned away for the rest of the window.
 const WINDOW_MS = 10 * 60_000;
 const MAX_FAILURES = 10;
@@ -111,6 +134,12 @@ export function sapApiAuth(req: Request, res: Response, next: NextFunction) {
   const seen = failures.get(ip);
   if (seen && now - seen.since < WINDOW_MS && seen.n >= MAX_FAILURES) {
     return next(new AppError(429, 'Too many wrong keys from this address. Try again in a few minutes.', 'TOO_MANY_ATTEMPTS'));
+  }
+
+  // A tap-to-download link: that one order's CSV, no login. Everything else still needs the key.
+  if (orderTokenMatches(req, env.SAP_API_KEY)) {
+    res.locals.sapApiAuthed = true;
+    return next();
   }
 
   if (!keyMatches(presentedKey(req), env.SAP_API_KEY)) {

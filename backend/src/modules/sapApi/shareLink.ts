@@ -1,4 +1,5 @@
 import type { POStatus } from '@prisma/client';
+import { orderCsvToken } from '../../middleware/sapApiAuth.js';
 
 export const SAP_API_PATH = '/api/integration/sap';
 
@@ -6,7 +7,8 @@ export interface SapLinkConfig {
   sapApiPublicUrl: string;
   renderExternalUrl: string;
   publicBaseUrl: string;
-  apiKeySet: boolean;
+  /** SAP_API_KEY; only used to make the tap-to-download code, never sent anywhere. */
+  apiKey: string;
   apiUser: string;
   simulatorRunning: boolean;
 }
@@ -17,6 +19,8 @@ export interface SapLink {
   /** Why not, in a sentence for the reviewer; null when ready. */
   reason: string | null;
   orderCsvUrl: string;
+  /** The same CSV, opened by tapping: no login, this order only. Null while the SAP API is off. */
+  downloadUrl: string | null;
   ordersUrl: string;
   user: string;
   apiEnabled: boolean;
@@ -36,7 +40,7 @@ export function sapBaseUrl(cfg: SapLinkConfig): string {
  */
 export function sapLinkFor(status: POStatus, correlationId: string, soNumber: string | null, cfg: SapLinkConfig): SapLink {
   const api = `${sapBaseUrl(cfg)}${SAP_API_PATH}`;
-  const reason = !cfg.apiKeySet
+  const reason = !cfg.apiKey
     ? 'The SAP API is switched off. Set SAP_API_KEY on the server.'
     : status === 'SENT_TO_SAP'
       ? null
@@ -49,13 +53,15 @@ export function sapLinkFor(status: POStatus, correlationId: string, soNumber: st
             : status === 'APPROVED'
               ? 'Approved; the link works as soon as the order is sent to SAP, in a few seconds.'
               : 'Approve this PO first. The link works while the order is waiting for SAP.';
+  const orderCsvUrl = `${api}/orders/${encodeURIComponent(correlationId)}/csv`;
   return {
     ready: reason === null,
     reason,
-    orderCsvUrl: `${api}/orders/${encodeURIComponent(correlationId)}/csv`,
+    orderCsvUrl,
+    downloadUrl: cfg.apiKey ? `${orderCsvUrl}?token=${orderCsvToken(correlationId, cfg.apiKey)}` : null,
     ordersUrl: `${api}/orders`,
     user: cfg.apiUser,
-    apiEnabled: cfg.apiKeySet,
+    apiEnabled: Boolean(cfg.apiKey),
     simulatorRunning: cfg.simulatorRunning,
   };
 }

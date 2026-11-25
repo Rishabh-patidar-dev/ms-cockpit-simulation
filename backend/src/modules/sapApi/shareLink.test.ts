@@ -5,7 +5,7 @@ const cfg = (over: Partial<SapLinkConfig> = {}): SapLinkConfig => ({
   sapApiPublicUrl: '',
   renderExternalUrl: 'https://bcc-outlook-intake.onrender.com',
   publicBaseUrl: 'https://bcc-outlook-intake.vercel.app',
-  apiKeySet: true,
+  apiKey: 'test-key',
   apiUser: 'sap',
   simulatorRunning: false,
   ...over,
@@ -29,6 +29,7 @@ describe('sapLinkFor', () => {
     );
     expect(link.ordersUrl).toBe('https://bcc-outlook-intake.onrender.com/api/integration/sap/orders');
     expect(link.user).toBe('sap');
+    expect(link.downloadUrl).toMatch(/\/orders\/PO-8A5FED59AEAE45F9AAEAE6D8FA4024B6\/csv\?token=[0-9a-f]{40}$/);
   });
 
   it.each([
@@ -44,8 +45,9 @@ describe('sapLinkFor', () => {
   });
 
   it('is not ready when the SAP API is off, whatever the status', () => {
-    const link = sapLinkFor('SENT_TO_SAP', 'PO-1', null, cfg({ apiKeySet: false }));
+    const link = sapLinkFor('SENT_TO_SAP', 'PO-1', null, cfg({ apiKey: '' }));
     expect(link.ready).toBe(false);
     expect(link.reason).toMatch(/SAP_API_KEY/);
+    expect(link.downloadUrl).toBeNull();
   });
 });

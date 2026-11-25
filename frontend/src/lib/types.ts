@@ -214,6 +214,8 @@ export interface SapLink {
   ready: boolean;
   reason: string | null;
   orderCsvUrl: string;
+  /** Opens the CSV by tapping: no login, this order only. */
+  downloadUrl: string | null;
   ordersUrl: string;
   user: string;
   apiEnabled: boolean;

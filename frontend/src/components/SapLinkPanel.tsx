@@ -31,14 +31,14 @@ export function SapLinkPanel({ d }: { d: RecordDetail }) {
   const r = d.record;
   const po = r.header?.poNumber ?? r.correlationId;
   const customer = r.header?.customerName;
+  const shareUrl = link.downloadUrl ?? link.orderCsvUrl;
   const message = [
     `SAP order file for PO ${po}${customer ? ` (${customer})` : ''}`,
     '',
-    link.orderCsvUrl,
+    link.downloadUrl ? 'Tap to download (no login needed):' : `Sign in with username "${link.user}" and the SAP API key:`,
+    shareUrl,
     '',
-    `Sign in with username "${link.user}" and the SAP API key (sent separately).`,
     'The link works until SAP posts its answer for this order.',
-    `All orders waiting for SAP: ${link.ordersUrl}`,
   ].join('\n');
 
   const copy = async (what: string, text: string) => {
@@ -68,17 +68,28 @@ export function SapLinkPanel({ d }: { d: RecordDetail }) {
       )}
 
       <dl className="kv">
-        <dt>This order</dt>
+        {link.downloadUrl && (
+          <>
+            <dt>Tap to download</dt>
+            <dd className="mono" style={{ opacity: link.ready ? 1 : 0.55 }}>
+              {link.ready ? <a href={link.downloadUrl}>{link.downloadUrl}</a> : link.downloadUrl}
+            </dd>
+          </>
+        )}
+        <dt>For SAP's job</dt>
         <dd className="mono" style={{ opacity: link.ready ? 1 : 0.55 }}>{link.orderCsvUrl}</dd>
         <dt>All waiting orders</dt>
         <dd className="mono">{link.ordersUrl}</dd>
         <dt>Sign in</dt>
-        <dd>username <span className="mono">{link.user}</span>, password = the SAP API key (send it separately, never with the link)</dd>
+        <dd>
+          {link.downloadUrl ? 'The tap-to-download link needs no login and opens only this order. ' : ''}
+          The other two need username <span className="mono">{link.user}</span> and the SAP API key as password.
+        </dd>
       </dl>
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-        <button className="sm" disabled={!link.ready} onClick={() => copy('link', link.orderCsvUrl)}>
-          {copied === 'link' ? 'Copied' : 'Copy link'}
+        <button className="sm" disabled={!link.ready} onClick={() => copy('link', shareUrl)}>
+          {copied === 'link' ? 'Copied' : link.downloadUrl ? 'Copy tap-to-download link' : 'Copy link'}
         </button>
         <button className="sm" disabled={!link.ready} onClick={() => copy('message', message)}>
           {copied === 'message' ? 'Copied' : 'Copy message for a colleague'}
