@@ -126,6 +126,22 @@ it('asks Gemini 2.5 for a thinking budget rather than a level', () => {
 });
 
 describe('several keys', () => {
+  const limited = () => {
+    throw Object.assign(new Error('{"error":{"code":429,"message":"Rate limit: requests per minute exceeded","status":"RESOURCE_EXHAUSTED"}}'), { status: 429 });
+  };
+  const spentDay = () => {
+    throw Object.assign(new Error('{"error":{"code":429,"message":"Generate content requests per day limit exceeded on Free Tier."}}'), { status: 429 });
+  };
+
+  it('waits for a key that is only rate-limited rather than failing on keys spent for the day', async () => {
+    answers = [limited, spentDay, ok];
+    const r = await new GeminiExtractionProvider(['fresh', 'spent']).extract(pdfReq, noSleep);
+    expect(noSleep).toHaveBeenCalledTimes(1);
+    expect(noSleep.mock.calls[0]![0]).toBeLessThanOrEqual(60_000);
+    expect(r.model).toBe('gemini-3.6-flash');
+    expect(calls).toHaveLength(3);
+  });
+
   const spent = () => {
     throw Object.assign(new Error('{"error":{"code":429,"message":"Generate content requests per day limit exceeded on Free Tier."}}'), { status: 429 });
   };

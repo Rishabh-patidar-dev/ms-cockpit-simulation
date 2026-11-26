@@ -166,6 +166,23 @@ export class GeminiExtractionProvider implements ExtractionProvider {
    * After a key problem: rest this key and move to the next one that is not resting. False
    * when there is no other key to try, so the caller handles the error as with a single key.
    */
+  /**
+   * With several keys: how long until the first key that is only rate-limited (resting a
+   * minute, not spent for the day or broken) can be used again, and make it the current key.
+   * Null when there is no such key.
+   */
+  private soonestBack(): number | null {
+    if (this.clients.length < 2) return null;
+    const now = Date.now();
+    let best: number | null = null;
+    this.restingUntil.forEach((until, i) => {
+      if (until - now <= 60_000 && (best === null || until < this.restingUntil[best]!)) best = i;
+    });
+    if (best === null) return null;
+    this.current = best;
+    return Math.max(1_000, this.restingUntil[best]! - now);
+  }
+
   private nextKey(err: unknown): boolean {
     if (this.clients.length < 2) return false;
     this.restingUntil[this.current] = Date.now() + restFor(err);
@@ -190,6 +207,7 @@ export class GeminiExtractionProvider implements ExtractionProvider {
     const allModels = () => [env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter((m, i, all) => m && all.indexOf(m) === i);
     let models = allModels();
     let lastErr: unknown;
+    let rateWaits = 0;
     for (let retry = 0; retry <= env.EXTRACTION_OVERLOAD_RETRIES; retry++) {
       const model = models[retry % models.length]!;
       try {
@@ -199,6 +217,16 @@ export class GeminiExtractionProvider implements ExtractionProvider {
         // A spent, expired or rate-limited key: the next key gets the same request at once,
         // with both models again, and it does not count as one of the waits.
         if (isKeyProblem(cause) && this.nextKey(cause)) {
+          models = allModels();
+          retry--;
+          continue;
+        }
+        // Every key is resting, but some only for the minute (rate-limited, not spent for the
+        // day): wait for the first to come back instead of failing on a key spent for the day.
+        const back = isKeyProblem(cause) ? this.soonestBack() : null;
+        if (back !== null && rateWaits < env.EXTRACTION_OVERLOAD_RETRIES * 3) {
+          rateWaits++;
+          await sleep(back);
           models = allModels();
           retry--;
           continue;
