@@ -48,3 +48,22 @@ This document is expected to be a Purchase Order from "${vendorName}". The follo
 
 ${vendorPrompt}`;
 }
+
+/** Bumped whenever SPREADSHEET_NOTES changes; added to the prompt version of a spreadsheet run. */
+export const SPREADSHEET_PROMPT_VERSION = 'sheet-v1';
+
+/**
+ * Added to the prompt when the PO is a spreadsheet rather than a PDF. The cells arrive as
+ * "Row 7: C7=ESC1010011 | K7=0.3072 | P7=27000", so there is nothing to read unclearly:
+ * what can go wrong is choosing the wrong column, and that is what these rules are about.
+ */
+export const SPREADSHEET_NOTES = `This document is a SPREADSHEET, not a scanned page. It is given row by row, each value as CELL=value (for example "P7=27000"), with every sheet introduced by "### Sheet".
+
+Spreadsheet rules:
+- Rows are laid out as a table: find the header row that names the columns (part number, description, quantity, price...), and read each following row as one line item. A label for a header value may sit in the cell to its left or above it.
+- A value may be a calculated result; take it as given. Do not calculate any value yourself.
+- Cells marked "(hidden)" were hidden in Excel. They usually hold older orders, past months or helper data. Read labels and titles from them where needed, but take ordered quantities and prices from visible cells unless the visible cells hold nothing for that field.
+- The same sheet may show quantities for several POs or months side by side (for example "PO 26-27 220", "PO 26-27 (06.10.2026)", "5-Oct", "Apr FC"). Take quantities only from the column for the newest purchase order, never from forecast ("FC") or delivery-month columns, and put that PO's number and date in the header. If no column clearly holds the ordered quantity, return null quantities with low confidence rather than choosing a month or forecast column.
+- Leave out rows with no ordered quantity in that column, and rows that are notes, totals or terms.
+- Where a row has an old and a new price ("Price", "New price from ..."), unitPrice is the new one.
+- Confidence describes how sure you are that you picked the right cell, since every value is legible. Use a low confidence whenever the column to use was not clearly labelled.`;

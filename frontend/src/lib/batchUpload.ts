@@ -10,6 +10,7 @@
  */
 
 /** A drop of more than this is almost certainly a mistake, and each file costs an extraction call. */
+import { refusalFor } from './fileKinds';
 export const MAX_BATCH = 50;
 
 /** Uploads in flight at once: enough to overlap the network, few enough not to swamp a free-tier host. */
@@ -78,10 +79,10 @@ export async function uploadAndPublishAll(
   // at a time so a big drop is not read into memory all at once.
   for (let i = 0; i < files.length; i++) {
     const file = files[i]!;
-    // Some sources drop files with an empty MIME type; the server checks the real content,
-    // so only turn away a file that positively claims to be something else.
-    if (file.type && file.type !== 'application/pdf') {
-      outcomes[i] = { file: file.name, kind: 'failed', reason: 'Not a PDF.' };
+    // The server checks the real content; only a file that plainly claims to be something else is turned away here.
+    const refused = refusalFor(file);
+    if (refused) {
+      outcomes[i] = { file: file.name, kind: 'failed', reason: refused };
       continue;
     }
     if (work.length >= MAX_BATCH) {

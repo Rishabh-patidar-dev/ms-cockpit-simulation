@@ -7,6 +7,7 @@ import { MAX_BATCH, summarise, uploadAndPublishAll, type BatchOutcome } from '..
 import { holdSummary, readyIds, summariseBulk } from '../lib/bulkApprove';
 import { parseDecimal } from '../lib/decimal';
 import { ago } from '../lib/format';
+import { ACCEPT_ATTRIBUTE, refusalFor } from '../lib/fileKinds';
 import { readWorklist, rememberWorklist, writeWorklist, type SortKey, type WorklistState } from '../lib/worklistState';
 import { StatusBadge } from '../components/StatusBadge';
 import { statusTone, toneClass } from '../lib/status';
@@ -290,10 +291,10 @@ export function WorklistPage() {
     }
     if (files.length === 1) {
       const file = files[0]!;
-      // Some sources drop files with an empty MIME type; the server validates the
-      // actual content, so only refuse a file that positively claims to be something else.
-      if (file.type && file.type !== 'application/pdf') {
-        setUploadError(`${file.name} is not a PDF.`);
+      // The server checks the real content; this only refuses a file that is plainly something else.
+      const refused = refusalFor(file);
+      if (refused) {
+        setUploadError(refused);
         return;
       }
       upload.mutate(file);
@@ -381,7 +382,7 @@ export function WorklistPage() {
             <div>
               <h1>Purchase orders</h1>
               <p className="cap">
-                Drop PDFs anywhere on this page &mdash; up to {MAX_BATCH} at once &mdash; or press <kbd>/</kbd> to search.
+                Drop PO files (PDF, Excel or CSV) anywhere on this page &mdash; up to {MAX_BATCH} at once &mdash; or press <kbd>/</kbd> to search.
                 {mail.data?.enabled && !mailNeedsConnect && (
                   <> POs emailed to <b>{mail.data.mailbox}</b> are added automatically.</>
                 )}
@@ -395,7 +396,7 @@ export function WorklistPage() {
               <input
                 ref={fileRef}
                 type="file"
-                accept="application/pdf"
+                accept={ACCEPT_ATTRIBUTE}
                 multiple
                 hidden
                 // Copied out before the value is cleared: the FileList is live and empties with it.
@@ -434,7 +435,7 @@ export function WorklistPage() {
                 {exporting ? 'Exporting…' : 'Export CSV'}
               </button>
               <button className="primary" onClick={() => fileRef.current?.click()} disabled={busy}>
-                {batch ? `Uploading ${batch.done} of ${batch.total}…` : upload.isPending ? 'Uploading…' : 'Upload PO PDFs'}
+                {batch ? `Uploading ${batch.done} of ${batch.total}…` : upload.isPending ? 'Uploading…' : 'Upload POs'}
               </button>
             </div>
           </div>
@@ -540,7 +541,7 @@ export function WorklistPage() {
           </div>
         ) : !rows.length ? (
           <div className="empty">
-            {q ? `Nothing matches “${q}”.` : 'Nothing here yet. Drop one or more PO PDFs to get started.'}
+            {q ? `Nothing matches “${q}”.` : 'Nothing here yet. Drop one or more POs (PDF, Excel or CSV) to get started.'}
           </div>
         ) : (
           <div className="ledger-wrap">

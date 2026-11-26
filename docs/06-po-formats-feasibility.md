@@ -123,7 +123,7 @@ Spreadsheet cells are already data, so nothing is lost to OCR. The work is in **
 | 2 | Extraction schema additions: `documentType`, `priceUnit`, `revisionNo`, vendor-side entity and GSTIN, `hsnCode`, `mpn`, printed line count. Prompt rules and validation per document type | 2 d |
 | 3 | Page-batched extraction for long PDFs, line-count check, paged line table | 2 d |
 | 4 | Revisions: "revision of" link, change instead of duplicate, file name vs document warning | 1 d |
-| 5 | Excel intake: accept and recognise, parse to table text, Excel prompt with cell citations, spreadsheet viewer | 3–4 d |
+| 5 ✅ | Excel intake (**done**, see README): accept and recognise, parse to table text, Excel prompt with cell citations, spreadsheet viewer | 3–4 d |
 | 6 | Saved per-account Excel mapping, and unpivoting schedules into delivery lines | 2–3 d |
 | 7 | Vendor profiles for the seven customers (prompts are data), plus an **accuracy harness**: hand-checked expected JSON for each file, a script that extracts and scores field by field | 2 d |
 | 8 | SAP routing per document type, once Zarrar confirms | depends on answers |

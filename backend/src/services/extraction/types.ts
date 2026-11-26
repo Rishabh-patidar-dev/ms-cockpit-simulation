@@ -1,7 +1,13 @@
 import type { ExtractionResult } from '../../domain/types.js';
 
 export interface ExtractionRequest {
-  pdf: Buffer;
+  /** The file as it was uploaded: a PDF, or a spreadsheet. */
+  document: Buffer;
+  /**
+   * Set when the document is a spreadsheet: its cells as text, each with its reference
+   * (see services/spreadsheet.ts). Sent to the model in place of the file.
+   */
+  sheetText?: string;
   prompt: string;
   promptVersion: string;
   timeoutMs: number;

@@ -47,6 +47,8 @@ npm run dev
 
 Segregation of duties is on by default (`SOD_REQUIRE_SEPARATE_APPROVER=true`), so upload as the uploader and approve as the approver.
 
+**Excel and CSV POs:** a PO may be a PDF, an Excel workbook (`.xlsx`, `.xlsm`) or a `.csv`, by upload or as an attachment to the Outlook intake mailbox. The file type is decided by its content, not its name. A spreadsheet is read cell by cell (formula results, not formulas; macros never run) and sent to the extractor as text with each value's cell reference, so nothing is lost to OCR. The review screen shows the sheet with Excel's own row numbers and column letters, with cells the customer hid shown faded. An Excel 97–2003 `.xls` is refused with a request to save it as `.xlsx`.
+
 **Uploading several POs at once:** select or drop up to 50 PDFs on the worklist. Each becomes its own record and is sent straight for extraction; a summary lists anything that was skipped, refused or left as a draft (for instance a PDF identical to one already in the system). Nothing reaches SAP until an approver approves it. One file still opens its draft first, so you can check it before publishing.
 
 **SAP calling the Business Command Centre:** SAP can fetch its waiting orders and post back results over HTTPS instead of (or besides) the folders: [docs/04-sap-api.md](docs/04-sap-api.md) is the page to give the SAP team, and [DEPLOY.md](DEPLOY.md#letting-sap-call-the-cockpit-optional) says how to switch it on.

@@ -70,6 +70,8 @@ export interface PORecord {
   intakeEmail?: { fromAddress: string; fromName: string | null; subject: string | null; receivedAt: string } | null;
   sourceDocument: {
     originalFilename: string;
+    /** application/pdf, or a spreadsheet type (see lib/fileKinds). */
+    mimeType?: string;
     byteSize: number;
     contentHash: string;
     pageCount: number | null;
@@ -348,4 +350,18 @@ export interface WorklistRow {
     currency: string | null;
     _count: { lineItems: number };
   } | null;
+}
+
+/** A spreadsheet PO as the server read it (GET /records/:id/document/sheets). */
+export interface WorkbookData {
+  sheets: {
+    name: string;
+    hidden: boolean;
+    /** rows[r][c] is the cell at row r+1, column c+1. */
+    rows: string[][];
+    hiddenRows: number[];
+    hiddenColumns: number[];
+    merges: string[];
+    truncated: boolean;
+  }[];
 }

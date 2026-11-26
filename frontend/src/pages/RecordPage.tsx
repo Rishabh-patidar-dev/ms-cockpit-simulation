@@ -6,6 +6,7 @@ import { useAuth } from '../lib/auth';
 import { Field } from '../components/Field';
 import { LineItemsTable } from '../components/LineItemsTable';
 import { PdfPane } from '../components/PdfPane';
+import { SourcePane } from '../components/SheetPane';
 import { StatusBadge } from '../components/StatusBadge';
 import { LifecycleRail } from '../components/LifecycleRail';
 import { SapLogPanel } from '../components/SapLogPanel';
@@ -322,13 +323,13 @@ export function RecordPage() {
                 </button>
               </div>
               {docTab === 'source' && r.sourceDocument ? (
-                <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} />
+                <SourcePane recordId={r.id} doc={r.sourceDocument} />
               ) : (
                 <PdfPane recordId={r.id} filename={`SO-${r.soNumber}.pdf`} kind="salesOrder" />
               )}
             </div>
           ) : r.sourceDocument ? (
-            <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} />
+            <SourcePane recordId={r.id} doc={r.sourceDocument} />
           ) : (
             <div />
           )}
@@ -534,7 +535,7 @@ function Actions({
       : blocked
         ? `${d.validation.blockingCount} blocking issue(s) must be fixed first.`
         : toAccept > 0
-          ? `${toAccept} warning(s) must be accepted first — check each against the PDF.`
+          ? `${toAccept} warning(s) must be accepted first — check each against the document.`
           : undefined;
 
   return (
@@ -678,7 +679,7 @@ function Notices({ d }: { d: RecordDetail }) {
       {docDups.length > 0 && (
         <div className={`notice ${docDupAtSap ? 't-crit' : 't-warn'}`}>
           <b>
-            This exact PDF is already in the system
+            This exact file is already in the system
             {docDupAtSap ? ' — and has reached SAP' : ''}
           </b>
           <span>
@@ -710,7 +711,7 @@ function Notices({ d }: { d: RecordDetail }) {
               <b>Sales Order value:</b> <span className="tnum">{d.salesOrder.currency} {d.salesOrder.value}</span>
             </span>
           )}
-          <span>The source PDF, the approved data and the full audit trail are retained.</span>
+          <span>The source document, the approved data and the full audit trail are retained.</span>
         </div>
       )}
       {r.status === 'FAILED' && d.failure && (
@@ -737,7 +738,7 @@ function Notices({ d }: { d: RecordDetail }) {
               : 'This record was cancelled.'}
           </span>
           {cancelled?.message && <span>{cancelled.message}</span>}
-          <span>The PDF and the audit trail are retained.</span>
+          <span>The document and the audit trail are retained.</span>
         </div>
       )}
       {r.status === 'SENT_TO_SAP' && (
@@ -800,13 +801,13 @@ function NoReadingView({ d }: { d: RecordDetail }) {
   const reading = r.status === 'PUBLISHED' || r.status === 'PROCESSING';
   return (
     <div className="split" style={{ ['--split' as string]: '42%' }}>
-      {r.sourceDocument ? <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} /> : <div />}
+      {r.sourceDocument ? <SourcePane recordId={r.id} doc={r.sourceDocument} /> : <div />}
       <div />
       <div className="reading">
         {reading && (
           <div className="notice t-info">
             <b>Extraction is running…</b>
-            <span>The PDF is being read. This page updates itself when it is done.</span>
+            <span>The document is being read. This page updates itself when it is done.</span>
           </div>
         )}
         {!reading && r.status !== 'EXTRACTION_FAILED' && r.status !== 'CANCELLED' && (
@@ -834,13 +835,13 @@ function DraftView({ d }: { d: RecordDetail }) {
   const r = d.record;
   return (
     <div className="split" style={{ ['--split' as string]: '42%' }}>
-      {r.sourceDocument ? <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} /> : <div />}
+      {r.sourceDocument ? <SourcePane recordId={r.id} doc={r.sourceDocument} /> : <div />}
       <div />
       <div className="reading">
         <div className="notice t-info">
           <b>Draft — nothing has been read yet</b>
           <span>
-            Check this is the right document, then publish it. Publishing sends the PDF for extraction;
+            Check this is the right document, then publish it. Publishing sends the document for extraction;
             it does not send anything to SAP.
           </span>
         </div>

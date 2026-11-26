@@ -84,7 +84,9 @@ export class GeminiExtractionProvider implements ExtractionProvider {
           {
             role: 'user',
             parts: [
-              { inlineData: { mimeType: 'application/pdf', data: req.pdf.toString('base64') } },
+              req.sheetText !== undefined
+                ? { text: `The purchase order below is a spreadsheet, given cell by cell.\n\n${req.sheetText}` }
+                : { inlineData: { mimeType: 'application/pdf', data: req.document.toString('base64') } },
               { text: req.prompt },
             ],
           },
