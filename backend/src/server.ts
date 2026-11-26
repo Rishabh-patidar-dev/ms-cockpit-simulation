@@ -4,7 +4,7 @@ import { prisma } from './db/client.js';
 import { logger } from './lib/logger.js';
 import { mailIntakeConfigured } from './services/mailIntake/intake.js';
 import { ensureDirectories } from './services/storage.js';
-import { startWorkers, stopWorkers } from './workers/index.js';
+import { startWorkers, stopWorkers, releaseInFlight } from './workers/index.js';
 
 /**
  * Refuse to start misconfigured rather than failing on every extraction tick.
@@ -78,6 +78,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'shutting down');
     stopWorkers();
+    await releaseInFlight().catch((err) => logger.error({ err }, 'could not hand back the record being read'));
     server.close();
     await prisma.$disconnect();
     process.exit(0);

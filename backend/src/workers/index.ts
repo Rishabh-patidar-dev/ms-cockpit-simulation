@@ -110,7 +110,44 @@ async function extractionTick() {
     orderBy: { statusChangedAt: 'asc' },
     select: { id: true },
   });
-  if (next) await runExtractionForRecord(next.id);
+  if (!next) return;
+  inFlight = next.id;
+  try {
+    await runExtractionForRecord(next.id);
+  } finally {
+    inFlight = null;
+  }
+}
+
+/** The record this process is reading right now, so a shutdown can hand it back. */
+let inFlight: string | null = null;
+
+/**
+ * On shutdown (a deploy, a restart): the record being read goes back in the queue at once, for
+ * the next process to read, instead of sitting in PROCESSING until the stuck-record rule
+ * notices it, which takes most of an hour.
+ */
+export async function releaseInFlight(): Promise<void> {
+  const id = inFlight;
+  if (!id) return;
+  const { count } = await prisma.pORecord.updateMany({
+    where: { id, status: 'PROCESSING' },
+    data: { status: 'PUBLISHED', statusChangedAt: new Date() },
+  });
+  if (count === 0) return;
+  await writeAudit({
+    recordId: id,
+    eventType: 'EXTRACTION_REQUEUED',
+    message: 'The server restarted while reading this; requeued for extraction.',
+    actorName: 'extraction-worker',
+  });
+  await writeAudit({
+    recordId: id,
+    eventType: 'STATUS_CHANGED',
+    message: 'PROCESSING → PUBLISHED (restart)',
+    actorName: 'extraction-worker',
+  });
+  log.warn({ recordId: id }, 'handed back a record being read, for the next process');
 }
 
 /**
