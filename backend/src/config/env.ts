@@ -36,11 +36,6 @@ const schema = z.object({
   // FR-4 extraction
   EXTRACTION_PROVIDER: z.enum(['gemini', 'mock']).default('gemini'),
   GEMINI_API_KEY: z.string().optional().default(''),
-  /**
-   * Several keys, separated by commas, spaces or new lines. When one is expired, invalid or out
-   * of quota the next is used at once. GEMINI_API_KEY, if also set, is tried after these.
-   */
-  GEMINI_API_KEYS: z.string().optional().default(''),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
   EXTRACTION_TIMEOUT_MS: int(120_000),
   EXTRACTION_MAX_ATTEMPTS: int(3),

@@ -1,16 +1,12 @@
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
 import { env } from '../../config/env.js';
 import { HEADER_FIELDS, LINE_FIELDS, extractionResultSchema } from '../../domain/types.js';
-import { childLogger } from '../../lib/logger.js';
-import { extractionParts } from '../documents/index.js';
 import { ExtractionError, type ExtractionProvider, type ExtractionRequest, type ExtractionResponse } from './types.js';
 
 /**
  * FR-4.7 — the model is asked for a structured response conforming to this schema, not
  * for free text. FR-4.8 — every field carries its own confidence.
  */
-const log = childLogger('gemini');
-
 const confidentValueSchema: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -61,59 +57,17 @@ function isRetryable(err: unknown): boolean {
   );
 }
 
-/**
- * Why a key, rather than the request, failed: such an error moves on to the next key at
- * once instead of spending one of the record's retries. Invalid and expired keys are put
- * aside for hours; a key out of quota or rate-limited for a minute (a daily quota trips
- * again on the next try and is put aside again).
- */
-export function keyFailure(err: unknown): { reason: string; cooldownMs: number } | null {
-  const status = (err as { status?: number })?.status;
-  const msg = String((err as Error)?.message ?? '');
-  if (/API[_ ]key (expired|not valid|invalid)|API_KEY_INVALID|API_KEY_EXPIRED|key.*(revoked|suspended)|CONSUMER_SUSPENDED/i.test(msg)) {
-    return { reason: 'invalid or expired', cooldownMs: 6 * 60 * 60_000 };
-  }
-  if (status === 401 || status === 403 || /PERMISSION_DENIED|UNAUTHENTICATED/.test(msg)) {
-    return { reason: 'not authorised', cooldownMs: 6 * 60 * 60_000 };
-  }
-  if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) {
-    return { reason: 'out of quota or rate-limited', cooldownMs: 60_000 };
-  }
-  return null;
-}
-
-/** GEMINI_API_KEYS (comma, space or newline separated) and GEMINI_API_KEY, in that order, without repeats. */
-export function configuredKeys(list: string = env.GEMINI_API_KEYS, single: string = env.GEMINI_API_KEY): string[] {
-  return [...new Set([...list.split(/[\s,;]+/), single].map((k) => k.trim()).filter(Boolean))];
-}
-
-interface PooledKey {
-  /** Position in the configured list, 1-based; logged instead of the key itself. */
-  n: number;
-  client: GoogleGenAI;
-  resting: number; // epoch ms until which the key is not used
-}
-
 export class GeminiExtractionProvider implements ExtractionProvider {
   readonly name = 'gemini';
-  private readonly keys: PooledKey[];
-  private current = 0;
+  private readonly client: GoogleGenAI;
 
-  constructor(apiKeys: string[] = configuredKeys()) {
-    if (apiKeys.length === 0) {
+  constructor(apiKey: string = env.GEMINI_API_KEY) {
+    if (!apiKey) {
       throw new Error(
-        'No Gemini API key is set. Set GEMINI_API_KEYS (or GEMINI_API_KEY) in backend/.env, or set EXTRACTION_PROVIDER=mock to run without it.',
+        'GEMINI_API_KEY is not set. Set it in backend/.env, or set EXTRACTION_PROVIDER=mock to run without it.',
       );
     }
-    this.keys = apiKeys.map((apiKey, i) => ({ n: i + 1, client: new GoogleGenAI({ apiKey }), resting: 0 }));
-  }
-
-  /** The keys to try for one request: the current one first, then the rest; resting keys only if nothing else is left. */
-  private order(): PooledKey[] {
-    const now = Date.now();
-    const rotated = [...this.keys.slice(this.current), ...this.keys.slice(0, this.current)];
-    const ready = rotated.filter((k) => k.resting <= now);
-    return ready.length ? ready : [...rotated].sort((a, b) => a.resting - b.resting).slice(0, 1);
+    this.client = new GoogleGenAI({ apiKey });
   }
 
   async extract(req: ExtractionRequest): Promise<ExtractionResponse> {
@@ -122,40 +76,27 @@ export class GeminiExtractionProvider implements ExtractionProvider {
     // FR-4.10 — bound the call; a hung request must not hold a record in PROCESSING.
     const timer = setTimeout(() => controller.abort(), req.timeoutMs);
 
-    let parts;
-    try {
-      parts = extractionParts(req.document, req.filename);
-    } catch (err) {
-      clearTimeout(timer);
-      throw new ExtractionError(`The document could not be read: ${(err as Error).message}`, false, err);
-    }
-
     let response;
-    const keyErrors: string[] = [];
     try {
-      for (const key of this.order()) {
-        try {
-          response = await key.client.models.generateContent({
-            model: env.GEMINI_MODEL,
-            contents: [{ role: 'user', parts: [...parts, { text: req.prompt }] }],
-            config: {
-              abortSignal: controller.signal,
-              responseMimeType: 'application/json',
-              responseSchema: RESPONSE_SCHEMA,
-              // Extraction is a reading task, not a creative one.
-              temperature: 0,
-            },
-          });
-          this.current = key.n - 1;
-          break;
-        } catch (err) {
-          const failure = keyFailure(err);
-          if (!failure) throw err;
-          key.resting = Date.now() + failure.cooldownMs;
-          keyErrors.push(`key ${key.n} ${failure.reason}`);
-          log.warn({ key: key.n, reason: failure.reason }, 'Gemini key failed; trying the next one');
-        }
-      }
+      response = await this.client.models.generateContent({
+        model: env.GEMINI_MODEL,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType: 'application/pdf', data: req.pdf.toString('base64') } },
+              { text: req.prompt },
+            ],
+          },
+        ],
+        config: {
+          abortSignal: controller.signal,
+          responseMimeType: 'application/json',
+          responseSchema: RESPONSE_SCHEMA,
+          // Extraction is a reading task, not a creative one.
+          temperature: 0,
+        },
+      });
     } catch (err) {
       throw new ExtractionError(
         `Gemini request failed: ${(err as Error).message}`,
@@ -164,13 +105,6 @@ export class GeminiExtractionProvider implements ExtractionProvider {
       );
     } finally {
       clearTimeout(timer);
-    }
-    if (!response) {
-      // Every key failed for a key reason. Quota comes back on its own, so that is worth a retry.
-      throw new ExtractionError(
-        `Every Gemini API key failed (${keyErrors.join('; ')}). Add a working key to GEMINI_API_KEYS.`,
-        keyErrors.some((e) => e.includes('quota')),
-      );
     }
 
     const latencyMs = Date.now() - started;

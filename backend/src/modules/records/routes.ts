@@ -13,7 +13,6 @@ import { buildSalesOrderPdf, salesOrderFromRecord, salesOrderOptions, salesOrder
 import { lineParamsSchema, listQuerySchema } from './query.js';
 import { sapLinkFor } from '../sapApi/shareLink.js';
 import { loadDocumentContent } from '../../services/storage.js';
-import { documentPreview } from '../../services/documents/index.js';
 
 export const recordsRouter = Router();
 recordsRouter.use(requireAuth);
@@ -158,42 +157,15 @@ recordsRouter.get('/:id/document', async (req, res, next) => {
     const buffer = await loadDocumentContent(record.id, record.sourceDocument.storagePath);
     if (!buffer) {
       throw notFound(
-        'The document for this record is no longer available. It was uploaded before documents were stored durably, and the host has since cleared its disk.',
+        'The PDF for this record is no longer available. It was uploaded before documents were stored durably, and the host has since cleared its disk.',
       );
     }
-    const mimeType = record.sourceDocument.mimeType || 'application/pdf';
-    // Only a PDF or picture is shown inline; anything else is a download, never rendered by the browser.
-    const inline = mimeType === 'application/pdf' || mimeType.startsWith('image/');
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `${inline ? 'inline' : 'attachment'}; filename="${record.sourceDocument.originalFilename.replace(/["\r\n]/g, '').replace(/[^\x20-\x7e]/g, '_')}"`,
+      `inline; filename="${record.sourceDocument.originalFilename.replace(/"/g, '')}"`,
     );
     res.send(buffer);
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * A spreadsheet or email as readable text, for the review screen: a browser cannot show an
- * .xlsx or .msg the way it shows a PDF. Empty text for a PDF or picture.
- */
-recordsRouter.get('/:id/document/preview', async (req, res, next) => {
-  try {
-    const record = await prisma.pORecord.findFirst({
-      where: { id: req.params.id!, deletedAt: null },
-      include: { sourceDocument: true },
-    });
-    if (!record?.sourceDocument) throw notFound('No document on this record.');
-    const buffer = await loadDocumentContent(record.id, record.sourceDocument.storagePath);
-    if (!buffer) throw notFound('The document for this record is no longer available.');
-    try {
-      res.json({ mimeType: record.sourceDocument.mimeType, ...documentPreview(buffer, record.sourceDocument.originalFilename) });
-    } catch (err) {
-      res.json({ mimeType: record.sourceDocument.mimeType, kind: 'unknown', text: `This document could not be read: ${(err as Error).message}` });
-    }
   } catch (err) {
     next(err);
   }

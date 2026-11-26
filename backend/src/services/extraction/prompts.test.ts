@@ -9,7 +9,7 @@ describe('generic extraction prompt (FR-4.4)', () => {
   // hash here.
   it('has a version that goes with its exact text', () => {
     const hash = createHash('sha256').update(GENERIC_EXTRACTION_PROMPT).digest('hex').slice(0, 16);
-    expect({ version: GENERIC_PROMPT_VERSION, hash }).toEqual({ version: 'generic-v3', hash: '45e75c766368f49e' });
+    expect({ version: GENERIC_PROMPT_VERSION, hash }).toEqual({ version: 'generic-v2', hash: 'c7bba28b91898e95' });
   });
 
   it('tells the model which total is the PO total', () => {

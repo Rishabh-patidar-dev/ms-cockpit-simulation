@@ -25,8 +25,6 @@ services:
         sync: false          # Supabase SESSION POOLER string — see DEPLOY.md step 3
       - key: GEMINI_API_KEY
         sync: false          # leave blank if EXTRACTION_PROVIDER=mock
-      - key: GEMINI_API_KEYS
-        sync: false          # several keys, comma-separated; an expired or out-of-quota key is skipped
 
       # ---- generated once by Render, then stable ----
       - key: JWT_SECRET

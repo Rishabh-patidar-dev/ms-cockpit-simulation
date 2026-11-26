@@ -80,8 +80,8 @@ export async function uploadAndPublishAll(
     const file = files[i]!;
     // Some sources drop files with an empty MIME type; the server checks the real content,
     // so only turn away a file that positively claims to be something else.
-    if (!isAcceptedFile(file)) {
-      outcomes[i] = { file: file.name, kind: 'failed', reason: NOT_ACCEPTED };
+    if (file.type && file.type !== 'application/pdf') {
+      outcomes[i] = { file: file.name, kind: 'failed', reason: 'Not a PDF.' };
       continue;
     }
     if (work.length >= MAX_BATCH) {
@@ -172,18 +172,4 @@ export async function uploadAndPublishAll(
 export function summarise(outcomes: BatchOutcome[]) {
   const count = (kind: BatchOutcome['kind']) => outcomes.filter((o) => o.kind === kind).length;
   return { queued: count('queued'), draft: count('draft'), skipped: count('skipped'), failed: count('failed') };
-}
-
-/** What can be uploaded: a PO as a PDF, an Excel or CSV sheet, an Outlook email, or a picture. */
-export const ACCEPT_ATTR = '.pdf,.xlsx,.csv,.msg,.png,.jpg,.jpeg,application/pdf';
-export const NOT_ACCEPTED = 'Not a PDF, Excel (.xlsx), CSV, Outlook email (.msg) or picture.';
-
-/**
- * Judged by the name, because browsers give spreadsheets and Outlook mail inconsistent types (a
- * .csv is often "application/vnd.ms-excel", a .msg often has none). The server checks the real content.
- */
-export function isAcceptedFile(file: { name: string; type: string }): boolean {
-  const ext = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
-  if (ext) return ['pdf', 'xlsx', 'csv', 'msg', 'png', 'jpg', 'jpeg'].includes(ext);
-  return !file.type || file.type === 'application/pdf';
 }

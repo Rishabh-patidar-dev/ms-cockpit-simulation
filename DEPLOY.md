@@ -113,7 +113,6 @@ Expected: `1 migration applied` then `Seeded 4 users and 2 vendor profiles.`
 3. It will ask for the two values marked `sync: false`:
    - `DATABASE_URL` → the session pooler string from step 3
    - `GEMINI_API_KEY` → your key (or leave blank and set `EXTRACTION_PROVIDER=mock`)
-   - `GEMINI_API_KEYS` → optional: several keys, comma-separated. When one is expired, invalid or out of quota the next is used at once
 4. `JWT_SECRET` is generated for you. Don't set it by hand.
 5. Deploy. The first build takes ~5–8 minutes (it installs dependencies and builds
    both the backend and the frontend inside the image).
