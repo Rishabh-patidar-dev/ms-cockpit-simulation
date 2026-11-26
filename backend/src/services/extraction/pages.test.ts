@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HEADER_FIELDS, LINE_FIELDS, type ExtractionResult } from '../../domain/types.js';
-import { extractByPages, mergeRanges, pageRanges } from './pages.js';
+import { clearSupplierCodes, dropZeroQuantityLines, extractByPages, mergeRanges, pageRanges } from './pages.js';
 import type { ExtractionProvider, ExtractionRequest } from './types.js';
 
 const cell = (value: string | null) => ({ value, confidence: 0.9 });
@@ -110,5 +110,38 @@ describe('a large spreadsheet', () => {
     const res = await extractByPages(provider, { document: Buffer.from('PK'), sheetText: rows, prompt: 'P', promptVersion: 'v', timeoutMs: 1 }, null, 6, 40);
     expect(prompts.map((p) => p.match(/rows (\d+) to (\d+)/)?.slice(1).join('-'))).toEqual(['1-40', '41-80', '81-100']);
     expect(res.result.lineItems.map((l) => l.materialCode.value)).toEqual(['M1', 'M3']);
+  });
+});
+
+describe('dropZeroQuantityLines', () => {
+  const withQty = (code: string, qty: string | null) => ({ ...line(1, code), quantity: cell(qty) }) as ExtractionResult['lineItems'][number];
+
+  it('leaves out lines ordered at 0 once some lines have a quantity, keeping blanks for the reviewer', () => {
+    const r = dropZeroQuantityLines(result([withQty('A', '0'), withQty('B', '41400'), withQty('C', '0.00'), withQty('D', null)]));
+    expect(r.lineItems.map((l) => [l.lineNumber, l.materialCode.value])).toEqual([[1, 'B'], [2, 'D']]);
+  });
+
+  it('changes nothing when no line has a quantity', () => {
+    const all = result([withQty('A', '0'), withQty('B', null)]);
+    expect(dropZeroQuantityLines(all)).toBe(all);
+  });
+});
+
+describe('clearSupplierCodes', () => {
+  const sheet = [
+    '### Sheet 1 of 1: "Sheet1" (3 rows x 6 columns)',
+    "Row 1: A1=Purch.Doc. | D1=Doc. Date | F1=Vendor | H1=BO code | L1=Oct'26 Firm Plan",
+    'Row 2: A2=5522104389 | D2=2020-08-21 | F2=CBM0225 | H2=BO09600157 | L2=87519',
+  ].join('\n');
+
+  it("clears a customer code that is the sheet's vendor code (the customer's code for us), for review", () => {
+    const r = clearSupplierCodes(result([line(1, 'A')], header({ customerCode: 'CBM0225', poNumber: '5522104389' })), sheet);
+    expect(r.header.customerCode).toEqual({ value: null, confidence: 0.3 });
+    expect(r.header.poNumber.value).toBe('5522104389');
+  });
+
+  it('keeps a customer code that is not in a vendor column', () => {
+    const r = result([line(1, 'A')], header({ customerCode: 'C-4284' }));
+    expect(clearSupplierCodes(r, sheet)).toBe(r);
   });
 });

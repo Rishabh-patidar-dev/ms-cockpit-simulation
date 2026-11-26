@@ -61,7 +61,7 @@ const schema = z.object({
    */
   EXTRACTION_PAGES_PER_CALL: int(6),
   /** The same for a spreadsheet: one longer than this many rows is read this many rows per request. 0 for one request. */
-  EXTRACTION_ROWS_PER_CALL: int(40),
+  EXTRACTION_ROWS_PER_CALL: int(25),
   EXTRACTION_MAX_ATTEMPTS: int(3),
   EXTRACTION_POLL_MS: int(2000),
   CONFIDENCE_THRESHOLD: num(0.85),

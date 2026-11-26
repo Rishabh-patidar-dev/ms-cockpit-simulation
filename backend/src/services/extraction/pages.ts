@@ -64,17 +64,28 @@ export function sheetRowCount(sheetText: string): number {
   return max;
 }
 
-export const rowRangeNote = (from: number, to: number, rowCount: number) => `---
+export const rowRangeNote = (from: number, to: number, rowCount: number, inRange?: number) => `---
 This spreadsheet has ${rowCount} rows, so its line items are read a few rows at a time. In THIS request:
 - Extract the header fields as usual, from wherever they are in the sheet.
-- Return ONLY the line items in spreadsheet rows ${from} to ${to} (the "Row N" numbers, on every sheet). Return every one of them that qualifies under the spreadsheet rules, in order, and none from other rows.`;
+- Return ONLY the line items in spreadsheet rows ${from} to ${to} (the "Row N" numbers, on every sheet). Return every one of them that qualifies under the spreadsheet rules, in order, and none from other rows.${
+  inRange ? `
+- Rows ${from} to ${to} hold ${inRange} non-empty row(s), counting any heading or note rows among them. Before answering, check that every item row among them is in your answer, one line item per row.` : ''
+}
+- Use the same column mapping as the spreadsheet rules give, so that every part of this sheet is read the same way.`;
+
+/** How many non-empty rows ("Row N: ...") the extractor's text has between two row numbers. */
+export function rowsBetween(sheetText: string, from: number, to: number): number {
+  let n = 0;
+  for (const m of sheetText.matchAll(/^Row (\d+):/gm)) if (+m[1]! >= from && +m[1]! <= to) n++;
+  return n;
+}
 
 /**
  * Extract a document, in ranges when it is long: a PDF past `perCall` pages, or a spreadsheet
  * past `rowsPerCall` rows (asked for 154 schedule lines at once, the model returned 10). A
  * failure in any range fails the whole extraction, so a record never lands with lines missing.
  */
-export async function extractByPages(
+async function extractInRanges(
   provider: ExtractionProvider,
   req: ExtractionRequest,
   pageCount: number | null,
@@ -86,7 +97,7 @@ export async function extractByPages(
     req.sheetText !== undefined ? pageRanges(rowCount, rowsPerCall) : pageCount ? pageRanges(pageCount, perCall) : [];
   if (ranges.length === 0) return provider.extract(req);
   const note = (from: number, to: number) =>
-    req.sheetText !== undefined ? rowRangeNote(from, to, rowCount) : rangeNote(from, to, pageCount!);
+    req.sheetText !== undefined ? rowRangeNote(from, to, rowCount, rowsBetween(req.sheetText, from, to)) : rangeNote(from, to, pageCount!);
 
   const answers: ExtractionResponse[] = [];
   for (const [from, to] of ranges) {
@@ -113,4 +124,66 @@ export async function extractByPages(
     inputTokens: sum((a) => a.inputTokens),
     outputTokens: sum((a) => a.outputTokens),
   };
+}
+
+/** "0", "0.00", "0,000": a quantity written as zero. Blank is not zero. */
+const isZero = (v: string | null | undefined) => !!v && /^[\s0.,]+$/.test(v) && /0/.test(v);
+
+/**
+ * A schedule lists every material, most with 0 in the month being ordered; asked to leave
+ * those out, the model still returned 92 of them beside 37 real lines. So, for a spreadsheet,
+ * once some lines carry a quantity, the lines whose quantity is written as 0 are dropped.
+ * Lines with no quantity read are kept for the reviewer.
+ */
+export function dropZeroQuantityLines(result: ExtractionResult): ExtractionResult {
+  const hasQty = result.lineItems.some((l) => l.quantity?.value && !isZero(l.quantity.value));
+  if (!hasQty) return result;
+  const kept = result.lineItems.filter((l) => !isZero(l.quantity?.value));
+  if (kept.length === result.lineItems.length) return result;
+  return { ...result, lineItems: kept.map((l, i) => ({ ...l, lineNumber: i + 1 })) };
+}
+
+/**
+ * Extract a document, in ranges when it is long: a PDF past `perCall` pages, or a spreadsheet
+ * past `rowsPerCall` rows. A spreadsheet's lines ordered at 0 are then left out.
+ */
+export async function extractByPages(
+  provider: ExtractionProvider,
+  req: ExtractionRequest,
+  pageCount: number | null,
+  perCall: number,
+  rowsPerCall = 0,
+): Promise<ExtractionResponse> {
+  const res = await extractInRanges(provider, req, pageCount, perCall, rowsPerCall);
+  if (req.sheetText === undefined) return res;
+  return { ...res, result: clearSupplierCodes(dropZeroQuantityLines(res.result), req.sheetText) };
+}
+
+/**
+ * The values in the sheet's "Vendor" / "Supplier" columns: the codes the customer gives US.
+ * Read from the extractor's text, where a heading row looks like "Row 1: A1=Purch.Doc. | F1=Vendor".
+ */
+export function supplierColumnValues(sheetText: string): Set<string> {
+  const cols = new Set<string>();
+  const values = new Set<string>();
+  for (const line of sheetText.split('\n')) {
+    for (const m of line.matchAll(/(?:^Row \d+: |\| )([A-Z]+)(\d+)(?:\(hidden\))?=([^|]*)/g)) {
+      const [, col, , raw] = m;
+      const value = raw!.trim();
+      if (/^(vendor|supplier)(\s*(code|no\.?|number|id))?$/i.test(value)) cols.add(col!);
+      else if (cols.has(col!) && value) values.add(value.toLowerCase());
+    }
+  }
+  return values;
+}
+
+/**
+ * A customer code read from the sheet that is really the supplier's code (Varroc's "Vendor"
+ * column holds CBM0225, Varroc's code for Millennium) is cleared and marked for review: as a
+ * customer code it would send the order to the wrong customer in SAP.
+ */
+export function clearSupplierCodes(result: ExtractionResult, sheetText: string): ExtractionResult {
+  const code = result.header.customerCode?.value?.trim();
+  if (!code || !supplierColumnValues(sheetText).has(code.toLowerCase())) return result;
+  return { ...result, header: { ...result.header, customerCode: { value: null, confidence: 0.3 } } };
 }
