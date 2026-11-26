@@ -121,6 +121,25 @@ function restFor(err: unknown): number {
   return rateLimited ? 60_000 : 6 * 3_600_000;
 }
 
+/**
+ * A confidence outside 0–1 fails the whole answer, and on a 36-page PO one field in 3,000
+ * came back as 100 (a percentage). Read 1–100 as a percentage and clamp the rest, rather
+ * than throw away every other value. Only `confidence` numbers are touched.
+ */
+export function normaliseConfidences(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normaliseConfidences);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([k, v]) => {
+      if (k === 'confidence' && typeof v === 'number' && Number.isFinite(v)) {
+        const c = v > 1 && v <= 100 ? v / 100 : v;
+        return [k, Math.min(1, Math.max(0, c))];
+      }
+      return [k, normaliseConfidences(v)];
+    }),
+  );
+}
+
 export class GeminiExtractionProvider implements ExtractionProvider {
   readonly name = 'gemini';
   private readonly clients: GoogleGenAI[];
@@ -263,7 +282,7 @@ export class GeminiExtractionProvider implements ExtractionProvider {
       throw new ExtractionError('Gemini returned a response that was not valid JSON.', true);
     }
 
-    const validated = extractionResultSchema.safeParse(parsed);
+    const validated = extractionResultSchema.safeParse(normaliseConfidences(parsed));
     if (!validated.success) {
       throw new ExtractionError(
         `Gemini response did not match the extraction schema: ${validated.error.issues

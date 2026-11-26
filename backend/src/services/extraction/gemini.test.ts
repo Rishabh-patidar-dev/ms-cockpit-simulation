@@ -30,7 +30,7 @@ vi.mock('@google/genai', async (importOriginal) => {
 });
 
 const { env } = await import('../../config/env.js');
-const { GeminiExtractionProvider, configuredKeys, isKeyProblem, isOverloaded, overloadWaitMs, thinkingFor } = await import('./gemini.js');
+const { GeminiExtractionProvider, configuredKeys, isKeyProblem, normaliseConfidences, isOverloaded, overloadWaitMs, thinkingFor } = await import('./gemini.js');
 
 const pdfReq = { document: Buffer.from('%PDF-1.4'), prompt: 'P', promptVersion: 'v', timeoutMs: 1000 };
 const sheetReq = { ...pdfReq, document: Buffer.from('PK\x03\x04'), sheetText: 'Row 1: A1=PO | B1=77' };
@@ -168,5 +168,13 @@ describe('several keys', () => {
     expect(configuredKeys('', '')).toEqual([]);
     expect(isKeyProblem(new Error('API key expired. Please renew the API key.'))).toBe(true);
     expect(isKeyProblem({ status: 503 })).toBe(false);
+  });
+});
+
+it('reads a confidence given as a percentage, and clamps one out of range, instead of failing the answer', () => {
+  expect(normaliseConfidences({ a: { value: 'x', confidence: 95 }, b: [{ confidence: -0.2 }, { confidence: 1.5 }], c: { value: '7' } })).toEqual({
+    a: { value: 'x', confidence: 0.95 },
+    b: [{ confidence: 0 }, { confidence: 0.015 }],
+    c: { value: '7' },
   });
 });
