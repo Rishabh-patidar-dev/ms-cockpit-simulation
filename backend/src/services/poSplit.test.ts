@@ -102,3 +102,14 @@ it('keeps schedule rows ordered with no PO number together as one record, for th
   const { splitNote } = await import('./poSplit.js');
   expect(splitNote(noPo!.splitFrom!)).toMatch(/with no PO number on them/);
 });
+
+it('treats words in the PO column ("PO in process") as no PO number yet', async () => {
+  const { poNumberIn } = await import('./poSplit.js');
+  expect([poNumberIn('PO in process'), poNumberIn('TBD'), poNumberIn(' 5522106414 '), poNumberIn('PO26-27-340G')]).toEqual(['', '', '5522106414', 'PO26-27-340G']);
+  const npd = ['BO Code,PO No.,Oct 26,Nov 26', 'BO1,5522106414,100,0', 'BO2,PO in process,50,0', 'BO3,,20,0'].join('\n');
+  const parts = await splitByPoNumber(csv(npd), 'csv', 'NPD.csv');
+  expect(parts?.map((p) => [p.poNumber, p.name, p.lines])).toEqual([
+    ['5522106414', 'NPD - PO 5522106414.csv', 1],
+    ['', 'NPD - no PO number.csv', 2],
+  ]);
+});

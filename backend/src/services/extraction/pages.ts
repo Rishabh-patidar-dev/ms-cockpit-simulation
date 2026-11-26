@@ -156,7 +156,7 @@ export async function extractByPages(
 ): Promise<ExtractionResponse> {
   const res = await extractInRanges(provider, req, pageCount, perCall, rowsPerCall);
   if (req.sheetText === undefined) return res;
-  return { ...res, result: clearSupplierCodes(dropZeroQuantityLines(res.result), req.sheetText) };
+  return { ...res, result: clearPlaceholderPoNumber(clearSupplierCodes(dropZeroQuantityLines(res.result), req.sheetText)) };
 }
 
 /**
@@ -186,4 +186,14 @@ export function clearSupplierCodes(result: ExtractionResult, sheetText: string):
   const code = result.header.customerCode?.value?.trim();
   if (!code || !supplierColumnValues(sheetText).has(code.toLowerCase())) return result;
   return { ...result, header: { ...result.header, customerCode: { value: null, confidence: 0.3 } } };
+}
+
+/**
+ * A PO number with no digit in it ("PO in process", "TBD") is a note that the PO has not been
+ * issued, not a PO number: it is cleared and marked for review, so it can never reach SAP as one.
+ */
+export function clearPlaceholderPoNumber(result: ExtractionResult): ExtractionResult {
+  const po = result.header.poNumber?.value?.trim();
+  if (!po || /\d/.test(po)) return result;
+  return { ...result, header: { ...result.header, poNumber: { value: null, confidence: 0.3 } } };
 }

@@ -145,3 +145,12 @@ describe('clearSupplierCodes', () => {
     expect(clearSupplierCodes(r, sheet)).toBe(r);
   });
 });
+
+describe('clearPlaceholderPoNumber', () => {
+  it('clears a PO number that is words ("PO in process") and keeps a real one', async () => {
+    const { clearPlaceholderPoNumber } = await import('./pages.js');
+    expect(clearPlaceholderPoNumber(result([], header({ poNumber: 'PO in process' }))).header.poNumber).toEqual({ value: null, confidence: 0.3 });
+    const real = result([], header({ poNumber: 'PO26-27-340G' }));
+    expect(clearPlaceholderPoNumber(real)).toBe(real);
+  });
+});

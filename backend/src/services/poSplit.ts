@@ -42,6 +42,15 @@ const csvRow = (r: string[]) => {
   return r.slice(0, end).map(csvCell).join(',');
 };
 
+/**
+ * The PO number in a cell, or '' when there is none yet. A PO number has a digit in it; words in
+ * the PO column ("PO in process", "TBD", "NA", "-") say the PO has not been issued.
+ */
+export const poNumberIn = (v: string | undefined) => {
+  const t = (v ?? '').trim();
+  return /\d/.test(t) ? t : '';
+};
+
 /** A quantity above zero: "41400", "1,358,681", "2.5". Blank, 0, text: no. */
 const ordered = (v: string | undefined) => {
   const n = Number((v ?? '').replace(/[,\s]/g, ''));
@@ -80,11 +89,11 @@ export async function splitByPoNumber(buffer: Buffer, kind: 'xlsx' | 'csv', file
   // In a list every line names its PO. In a schedule a new item may be ordered before its PO
   // exists: those rows are kept together as one record with no PO number, for the reviewer.
   if (rowsToSplit.length === 0) return null;
-  if (qtyCol < 0 && rowsToSplit.some((r) => !(r[col] ?? '').trim())) return null;
+  if (qtyCol < 0 && rowsToSplit.some((r) => !poNumberIn(r[col]))) return null;
   const order: string[] = [];
   const byPo = new Map<string, string[][]>();
   for (const r of rowsToSplit) {
-    const po = (r[col] ?? '').trim();
+    const po = poNumberIn(r[col]);
     if (!byPo.has(po)) {
       byPo.set(po, []);
       order.push(po);
