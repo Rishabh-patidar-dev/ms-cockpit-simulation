@@ -11,6 +11,7 @@ import * as bulkApprove from '../../services/bulkApprove.js';
 import * as records from '../../services/records.js';
 import { buildSalesOrderPdf, salesOrderFromRecord, salesOrderOptions, salesOrderValue } from '../../services/salesOrderDocument.js';
 import { lineParamsSchema, listQuerySchema } from './query.js';
+import { sapLinkFor } from '../sapApi/shareLink.js';
 import { loadDocumentContent } from '../../services/storage.js';
 import { isSpreadsheet, kindOfMimeType } from '../../services/documentKind.js';
 import { readSpreadsheet, SpreadsheetError } from '../../services/spreadsheet.js';
@@ -53,6 +54,15 @@ async function detailResponse(id: string) {
     documentDuplicates: contentHash ? await records.findDuplicates(contentHash, id) : [],
     allowedTransitions: TRANSITIONS[detail.record.status],
     statusLabel: STATUS_LABELS[detail.record.status],
+    // The link to share with SAP for this order; never the key.
+    sapLink: sapLinkFor(detail.record.status, detail.record.correlationId, detail.record.soNumber, {
+      sapApiPublicUrl: env.SAP_API_PUBLIC_URL,
+      renderExternalUrl: env.RENDER_EXTERNAL_URL,
+      publicBaseUrl: env.PUBLIC_BASE_URL,
+      apiKey: env.SAP_API_KEY,
+      apiUser: env.SAP_API_USER,
+      simulatorRunning: env.RUN_SAP_SIMULATOR,
+    }),
   };
 }
 

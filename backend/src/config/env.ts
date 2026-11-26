@@ -154,6 +154,14 @@ const schema = z.object({
 
   /** Where the app is reached, for the "Open" links in emails and Teams messages. */
   PUBLIC_BASE_URL: z.string().default('http://localhost:5190'),
+  /**
+   * The address SAP calls, shown in the "SAP link" box on a PO. Defaults to RENDER_EXTERNAL_URL
+   * (Render sets it to the service's own https://….onrender.com), then PUBLIC_BASE_URL.
+   */
+  SAP_API_PUBLIC_URL: z.string().optional().default(''),
+  RENDER_EXTERNAL_URL: z.string().optional().default(''),
+  /** Read by docker/start.sh to start the simulator; here only so the SAP link box can warn about it. */
+  RUN_SAP_SIMULATOR: bool(false),
   /** Email. Leave SMTP_HOST empty and no email is ever sent. */
   SMTP_HOST: z.string().optional().default(''),
   SMTP_PORT: int(587),

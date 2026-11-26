@@ -3,6 +3,7 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../db/client.js';
 import { childLogger } from '../../lib/logger.js';
 import { assertTransition } from '../../domain/status.js';
+import { cleanExtraction } from '../../domain/cleanExtraction.js';
 import {
   HEADER_FIELDS,
   LINE_FIELDS,
@@ -183,7 +184,7 @@ export async function runExtractionForRecord(recordId: string): Promise<void> {
         timeoutMs: env.EXTRACTION_TIMEOUT_MS,
       });
 
-      await persistExtraction(recordId, response.result, profile?.id ?? null);
+      await persistExtraction(recordId, cleanExtraction(response.result), profile?.id ?? null);
 
       await prisma.extractionRun.update({
         where: { id: run.id },

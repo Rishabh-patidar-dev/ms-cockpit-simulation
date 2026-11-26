@@ -236,3 +236,42 @@ describe('the whole app: the key is checked before the body is read', () => {
     reset();
   });
 });
+
+describe('tap-to-download links', () => {
+  async function tokenApp() {
+    const loaded = await load({ SAP_API_KEY: KEY });
+    const app = express();
+    app.use('/sap', loaded.sapApiAuth);
+    app.get('/sap/orders/:id/csv', (req, res) => res.type('text/csv').send(`H,${req.params.id}`));
+    app.get('/sap/orders', (_req, res) => res.json({ orders: [] }));
+    const { errorHandler } = await import('./error.js');
+    app.use(errorHandler);
+    return { app, orderCsvToken: loaded.orderCsvToken };
+  }
+
+  it("opens that order's CSV with its own code and no login", async () => {
+    const { app, orderCsvToken } = await tokenApp();
+    const res = await request(app).get(`/sap/orders/PO-ABC/csv?token=${orderCsvToken('PO-ABC', KEY)}`);
+    expect(res.status).toBe(200);
+    expect(res.text).toBe('H,PO-ABC');
+  });
+
+  it("refuses another order's code, a wrong code, and a code on any other endpoint", async () => {
+    const { app, orderCsvToken } = await tokenApp();
+    const other = orderCsvToken('PO-OTHER', KEY);
+    expect((await request(app).get(`/sap/orders/PO-ABC/csv?token=${other}`)).status).toBe(401);
+    expect((await request(app).get('/sap/orders/PO-ABC/csv?token=deadbeef')).status).toBe(401);
+    expect((await request(app).get(`/sap/orders?token=${orderCsvToken('PO-ABC', KEY)}`)).status).toBe(401);
+  });
+
+  it('a code made with an old key stops working when the key is replaced', async () => {
+    const { app, orderCsvToken } = await tokenApp();
+    const old = orderCsvToken('PO-ABC', 'the-previous-key');
+    expect((await request(app).get(`/sap/orders/PO-ABC/csv?token=${old}`)).status).toBe(401);
+  });
+
+  it('the key still works on its own', async () => {
+    const { app } = await tokenApp();
+    expect((await request(app).get('/sap/orders/PO-ABC/csv').auth('sap', KEY)).status).toBe(200);
+  });
+});

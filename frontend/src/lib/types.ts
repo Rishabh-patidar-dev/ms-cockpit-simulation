@@ -208,6 +208,20 @@ export interface RecordDetail {
   salesOrder?: { value: string; currency: string; priceNote: string } | null;
   allowedTransitions: POStatus[];
   statusLabel: string;
+  /** The link to share with SAP for this order (the key is never included). */
+  sapLink?: SapLink;
+}
+
+export interface SapLink {
+  ready: boolean;
+  reason: string | null;
+  orderCsvUrl: string;
+  /** Opens the CSV by tapping: no login, this order only. */
+  downloadUrl: string | null;
+  ordersUrl: string;
+  user: string;
+  apiEnabled: boolean;
+  simulatorRunning: boolean;
 }
 
 export type NotificationKind =
