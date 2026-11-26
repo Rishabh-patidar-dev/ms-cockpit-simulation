@@ -323,13 +323,13 @@ export function RecordPage() {
                 </button>
               </div>
               {docTab === 'source' && r.sourceDocument ? (
-                <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} />
+                <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} mimeType={r.sourceDocument.mimeType} />
               ) : (
                 <PdfPane recordId={r.id} filename={`SO-${r.soNumber}.pdf`} kind="salesOrder" />
               )}
             </div>
           ) : r.sourceDocument ? (
-            <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} />
+            <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} mimeType={r.sourceDocument.mimeType} />
           ) : (
             <div />
           )}
@@ -803,7 +803,7 @@ function NoReadingView({ d }: { d: RecordDetail }) {
   const reading = r.status === 'PUBLISHED' || r.status === 'PROCESSING';
   return (
     <div className="split" style={{ ['--split' as string]: '42%' }}>
-      {r.sourceDocument ? <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} /> : <div />}
+      {r.sourceDocument ? <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} mimeType={r.sourceDocument.mimeType} /> : <div />}
       <div />
       <div className="reading">
         {reading && (
@@ -837,7 +837,7 @@ function DraftView({ d }: { d: RecordDetail }) {
   const r = d.record;
   return (
     <div className="split" style={{ ['--split' as string]: '42%' }}>
-      {r.sourceDocument ? <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} /> : <div />}
+      {r.sourceDocument ? <PdfPane recordId={r.id} filename={r.sourceDocument.originalFilename} mimeType={r.sourceDocument.mimeType} /> : <div />}
       <div />
       <div className="reading">
         <div className="notice t-info">

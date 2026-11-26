@@ -70,6 +70,8 @@ export interface PORecord {
   intakeEmail?: { fromAddress: string; fromName: string | null; subject: string | null; receivedAt: string } | null;
   sourceDocument: {
     originalFilename: string;
+    /** application/pdf, or a spreadsheet, Outlook email or picture. */
+    mimeType?: string;
     byteSize: number;
     contentHash: string;
     pageCount: number | null;

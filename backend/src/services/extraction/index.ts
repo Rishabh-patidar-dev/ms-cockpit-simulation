@@ -15,6 +15,7 @@ import {
 } from '../../domain/types.js';
 import { writeAudit } from '../audit.js';
 import { loadDocumentContent } from '../storage.js';
+import { documentPreview } from '../documents/index.js';
 import { GeminiExtractionProvider } from './gemini.js';
 import { MockExtractionProvider } from './mock.js';
 import { notifyRecord } from '../notifications/notify.js';
@@ -100,12 +101,13 @@ export async function runExtractionForRecord(recordId: string): Promise<void> {
   });
 
   const pdf = await loadDocumentContent(recordId, record.sourceDocument.storagePath);
+  const filename = record.sourceDocument.originalFilename;
   if (!pdf) {
     // Neither the disk cache nor the database copy exists — an unretryable loss, so
     // land in EXTRACTION_FAILED rather than throwing and stranding the record in
     // PROCESSING, a status no worker ever picks back up.
     const message =
-      'The uploaded PDF is no longer available (the host disk was cleared and no database copy exists). Upload it again.';
+      'The uploaded document is no longer available (the host disk was cleared and no database copy exists). Upload it again.';
     await prisma.pORecord.update({
       where: { id: recordId },
       data: { status: 'EXTRACTION_FAILED', statusChangedAt: new Date() },
@@ -126,7 +128,15 @@ export async function runExtractionForRecord(recordId: string): Promise<void> {
     log.error({ recordId }, 'source document missing from disk and database');
     return;
   }
-  const profile = await matchVendorProfile(pdf, record.vendorHint);
+  // Markers are looked for in readable text: a PDF's own bytes, or a spreadsheet's or email's rendering.
+  let searchable = pdf;
+  try {
+    const preview = documentPreview(pdf, filename);
+    if (preview.text) searchable = Buffer.from(preview.text, 'latin1');
+  } catch {
+    /* unreadable here means unreadable for the extractor too; it reports that properly below */
+  }
+  const profile = await matchVendorProfile(searchable, record.vendorHint);
   const prompt = profile
     ? buildVendorPrompt(profile.name, profile.extractionPrompt)
     : GENERIC_EXTRACTION_PROMPT;
@@ -162,7 +172,8 @@ export async function runExtractionForRecord(recordId: string): Promise<void> {
   for (let tries = 1; tries <= env.EXTRACTION_MAX_ATTEMPTS; tries++) {
     try {
       const response = await getProvider().extract({
-        pdf,
+        document: pdf,
+        filename,
         prompt,
         promptVersion,
         timeoutMs: env.EXTRACTION_TIMEOUT_MS,

@@ -29,16 +29,16 @@ export interface StoredDocument {
   pageCount: number | null;
 }
 
-export async function storeDocument(recordId: string, buffer: Buffer): Promise<StoredDocument> {
+export async function storeDocument(recordId: string, buffer: Buffer, ext = 'pdf'): Promise<StoredDocument> {
   const dir = path.join(env.paths.documents, recordId);
   await fs.mkdir(dir, { recursive: true });
-  const storagePath = path.join(dir, 'original.pdf');
+  const storagePath = path.join(dir, `original.${ext}`);
   await fs.writeFile(storagePath, buffer);
   return {
     storagePath,
     contentHash: sha256(buffer),
     byteSize: buffer.byteLength,
-    pageCount: countPdfPages(buffer),
+    pageCount: ext === 'pdf' ? countPdfPages(buffer) : null,
   };
 }
 

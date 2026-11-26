@@ -12,7 +12,7 @@ export class MockExtractionProvider implements ExtractionProvider {
   readonly name = 'mock';
 
   async extract(req: ExtractionRequest): Promise<ExtractionResponse> {
-    const seed = sha256(req.pdf);
+    const seed = sha256(req.document);
     const rand = seededRandom(seed);
     const started = Date.now();
     await new Promise((r) => setTimeout(r, 300));

@@ -7,7 +7,7 @@ import { childLogger } from '../../lib/logger.js';
 import { writeAudit } from '../audit.js';
 import { notify, notifyIntegration } from '../notifications/notify.js';
 import { createRecord, publishRecord, type Actor } from '../records.js';
-import { looksLikePdf } from '../storage.js';
+import { detectDocument } from '../documents/index.js';
 import { mailConnection, NOT_CONNECTED, storedTokens } from './delegated.js';
 import { GraphMailSource, type MailMessage, type MailSource } from './source.js';
 
@@ -120,13 +120,20 @@ async function handleMessage(source: MailSource, deps: IntakeDeps, opts: IntakeO
 
   const attachments = await source.getAttachments(message, opts.maxBytes);
   const tooLarge = attachments.filter((a) => a.content === null && /\.pdf$/i.test(a.name)).map((a) => a.name);
-  const pdfs = attachments.filter((a): a is typeof a & { content: Buffer } => a.content !== null && looksLikePdf(a.content));
+  // A PDF, Excel workbook, CSV or attached Outlook email: anything the extractor reads. Pictures are
+  // left out (in a mail they are logos and signatures), as is anything it cannot read.
+  const pdfs = attachments
+    .filter((a): a is typeof a & { content: Buffer } => a.content !== null)
+    .flatMap((a) => {
+      const d = detectDocument(a.content, a.name);
+      return 'error' in d || d.kind === 'image' ? [] : [{ ...a, mimeType: d.mimeType }];
+    });
 
   if (pdfs.length === 0) {
     const detail = tooLarge.length
       ? `PDF over the ${(opts.maxBytes / 1024 / 1024).toFixed(0)} MB limit: ${tooLarge.join(', ')}.`
       : attachments.length
-        ? `No PDF among the attachments (${attachments.map((a) => a.name).join(', ')}).`
+        ? `No PDF or spreadsheet among the attachments (${attachments.map((a) => a.name).join(', ')}).`
         : 'The mail has no attachments.';
     return setAside('NO_PDF', detail);
   }
@@ -139,7 +146,7 @@ async function handleMessage(source: MailSource, deps: IntakeDeps, opts: IntakeO
   const drafts: string[] = [];
   for (const pdf of pdfs.slice(0, MAX_PDFS_PER_MAIL)) {
     if (done.has(sha256(pdf.content))) continue; // imported on a pass that did not finish
-    const rec = await deps.createRecord({ buffer: pdf.content, originalname: pdf.name, mimetype: 'application/pdf' }, notes, email.id);
+    const rec = await deps.createRecord({ buffer: pdf.content, originalname: pdf.name, mimetype: pdf.mimeType }, notes, email.id);
     created.push({ ...rec, name: pdf.name });
     await deps.audit(rec.recordId, `${notes} (received ${message.receivedAt.toISOString()})`);
 

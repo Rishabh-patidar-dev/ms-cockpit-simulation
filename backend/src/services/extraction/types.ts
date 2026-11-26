@@ -1,7 +1,9 @@
 import type { ExtractionResult } from '../../domain/types.js';
 
 export interface ExtractionRequest {
-  pdf: Buffer;
+  /** The original file: a PDF, spreadsheet, email or image (see services/documents). */
+  document: Buffer;
+  filename: string;
   prompt: string;
   promptVersion: string;
   timeoutMs: number;

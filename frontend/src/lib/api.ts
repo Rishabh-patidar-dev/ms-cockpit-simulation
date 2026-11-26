@@ -216,6 +216,10 @@ export const api = {
   callSapLog: (id: string) =>
     request<{ call: SapLogCall }>(`/records/${id}/sap-log`, { method: 'POST' }),
 
+  /** A spreadsheet or email on a record, as readable text (a browser cannot show those itself). */
+  documentPreview: (id: string) =>
+    request<{ mimeType: string; kind: string; text: string }>(`/records/${id}/document/preview`),
+
   /** The PDF is behind auth, so it is fetched as a blob rather than linked directly. */
   documentUrl: (id: string) => pdfObjectUrl(`/api/records/${id}/document`),
 
@@ -227,7 +231,7 @@ async function pdfObjectUrl(path: string): Promise<string> {
   const res = await fetch(path, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
   if (res.status === 401 && getToken()) expireSession();
   if (!res.ok) {
-    let message = 'Could not load the PDF.';
+    let message = 'Could not load the document.';
     try {
       const body = (await res.json()) as { error?: { message?: string } };
       if (body?.error?.message) message = body.error.message;

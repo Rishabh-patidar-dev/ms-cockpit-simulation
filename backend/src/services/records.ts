@@ -21,7 +21,8 @@ import { writeAudit } from './audit.js';
 import { notifyRecord } from './notifications/notify.js';
 import { mapSapError } from './sap/errorMap.js';
 import { submitToSap } from './sap/outbound.js';
-import { deleteDocument, looksLikePdf, storeDocument } from './storage.js';
+import { deleteDocument, storeDocument } from './storage.js';
+import { detectDocument } from './documents/index.js';
 
 const log = childLogger('records');
 
@@ -46,12 +47,9 @@ export async function createRecord(
   } = {},
 ) {
   // FR-1.2 / NFR-3.4 — validate by content, not by the filename extension.
-  if (!looksLikePdf(file.buffer)) {
-    throw badRequest(
-      'Only PDF files are accepted. This file does not start with a PDF signature.',
-      'NOT_A_PDF',
-    );
-  }
+  // A PDF, or a spreadsheet, email or image the extractor can read (services/documents).
+  const detected = detectDocument(file.buffer, file.originalname);
+  if ('error' in detected) throw badRequest(detected.error, 'UNSUPPORTED_FILE');
   if (file.buffer.byteLength > env.MAX_UPLOAD_BYTES) {
     throw badRequest(
       `File is ${(file.buffer.byteLength / 1024 / 1024).toFixed(1)} MB; the limit is ${(
@@ -66,7 +64,7 @@ export async function createRecord(
   // FR-8.1 — allocate the id first so the correlation ID derives from it.
   const recordId = newRecordId();
   const correlationId = correlationIdFor(recordId);
-  const stored = await storeDocument(recordId, file.buffer);
+  const stored = await storeDocument(recordId, file.buffer, detected.ext);
 
   try {
     const record = await prisma.pORecord.create({
@@ -82,7 +80,7 @@ export async function createRecord(
           create: {
             originalFilename: file.originalname,
             storagePath: stored.storagePath,
-            mimeType: 'application/pdf',
+            mimeType: detected.mimeType,
             byteSize: stored.byteSize,
             contentHash: stored.contentHash,
             // The durable copy — the file at storagePath is only a cache on hosts
