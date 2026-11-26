@@ -82,11 +82,15 @@ export async function deleteDocument(recordId: string): Promise<void> {
 }
 
 /**
- * Page count without pulling in a PDF library: count the /Type /Page objects and fall
- * back to null rather than guessing. Only used for display, never for logic.
+ * Page count without pulling in a PDF library. The page tree's root says how many pages
+ * there are (/Count, the largest one in the file); counting /Type /Page objects is the
+ * fallback, and overcounts when a file carries old revisions. Null rather than a guess.
+ * Shown on screen, and used to decide when a long PDF is read a few pages at a time.
  */
 export function countPdfPages(buffer: Buffer): number | null {
   const text = buffer.toString('latin1');
+  const counts = [...text.matchAll(/\/Count\s+(\d+)/g)].map((m) => Number(m[1]));
+  if (counts.length) return Math.max(...counts);
   const matches = text.match(/\/Type\s*\/Page[^s]/g);
   return matches ? matches.length : null;
 }

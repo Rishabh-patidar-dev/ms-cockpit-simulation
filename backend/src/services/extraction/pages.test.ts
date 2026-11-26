@@ -84,3 +84,31 @@ describe('extractByPages', () => {
     expect(seen.map((r) => r.prompt)).toEqual(['P', 'P']);
   });
 });
+
+describe('countPdfPages', async () => {
+  const { countPdfPages } = await import('../storage.js');
+  it("takes the page tree's /Count over counting page objects, which overcounts old revisions", () => {
+    const pages = Array.from({ length: 23 }, () => '<< /Type /Page >>').join('\n');
+    expect(countPdfPages(Buffer.from(`%PDF-1.4\n<< /Type /Pages /Count 12 /Kids [] >>\n${pages}`))).toBe(12);
+    expect(countPdfPages(Buffer.from(`%PDF-1.4\n${pages}`))).toBe(23);
+    expect(countPdfPages(Buffer.from('%PDF-1.4'))).toBeNull();
+  });
+});
+
+describe('a large spreadsheet', () => {
+  it('is read 40 rows per request, a range with no qualifying line costing nothing', async () => {
+    const rows = Array.from({ length: 100 }, (_, i) => `Row ${i + 1}: A${i + 1}=x`).join('\n');
+    const prompts: string[] = [];
+    const provider: ExtractionProvider = {
+      name: 'fake',
+      async extract(r) {
+        prompts.push(r.prompt);
+        if (prompts.length === 2) throw new Error('Gemini response did not match the extraction schema: lineItems Array must contain at least 1 element(s)');
+        return { result: result([line(1, `M${prompts.length}`)]), raw: {}, model: 'm', provider: 'fake', latencyMs: 1, inputTokens: null, outputTokens: null };
+      },
+    };
+    const res = await extractByPages(provider, { document: Buffer.from('PK'), sheetText: rows, prompt: 'P', promptVersion: 'v', timeoutMs: 1 }, null, 6, 40);
+    expect(prompts.map((p) => p.match(/rows (\d+) to (\d+)/)?.slice(1).join('-'))).toEqual(['1-40', '41-80', '81-100']);
+    expect(res.result.lineItems.map((l) => l.materialCode.value)).toEqual(['M1', 'M3']);
+  });
+});

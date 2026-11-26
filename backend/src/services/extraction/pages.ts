@@ -57,34 +57,56 @@ export function mergeRanges(parts: ExtractionResult[]): ExtractionResult {
   } as ExtractionResult;
 }
 
+/** The last spreadsheet row number in the extractor's text ("Row 158: ..."). */
+export function sheetRowCount(sheetText: string): number {
+  let max = 0;
+  for (const m of sheetText.matchAll(/^Row (\d+):/gm)) max = Math.max(max, Number(m[1]));
+  return max;
+}
+
+export const rowRangeNote = (from: number, to: number, rowCount: number) => `---
+This spreadsheet has ${rowCount} rows, so its line items are read a few rows at a time. In THIS request:
+- Extract the header fields as usual, from wherever they are in the sheet.
+- Return ONLY the line items in spreadsheet rows ${from} to ${to} (the "Row N" numbers, on every sheet). Return every one of them that qualifies under the spreadsheet rules, in order, and none from other rows.`;
+
 /**
- * Extract a document, in page ranges when it is a long PDF. A failure in any range fails the
- * whole extraction (with that range's error), so a record never lands with lines missing.
+ * Extract a document, in ranges when it is long: a PDF past `perCall` pages, or a spreadsheet
+ * past `rowsPerCall` rows (asked for 154 schedule lines at once, the model returned 10). A
+ * failure in any range fails the whole extraction, so a record never lands with lines missing.
  */
 export async function extractByPages(
   provider: ExtractionProvider,
   req: ExtractionRequest,
   pageCount: number | null,
   perCall: number,
+  rowsPerCall = 0,
 ): Promise<ExtractionResponse> {
-  const ranges = req.sheetText === undefined && pageCount ? pageRanges(pageCount, perCall) : [];
+  const rowCount = req.sheetText !== undefined ? sheetRowCount(req.sheetText) : 0;
+  const ranges =
+    req.sheetText !== undefined ? pageRanges(rowCount, rowsPerCall) : pageCount ? pageRanges(pageCount, perCall) : [];
   if (ranges.length === 0) return provider.extract(req);
+  const note = (from: number, to: number) =>
+    req.sheetText !== undefined ? rowRangeNote(from, to, rowCount) : rangeNote(from, to, pageCount!);
 
   const answers: ExtractionResponse[] = [];
   for (const [from, to] of ranges) {
-    answers.push(
-      await provider.extract({
-        ...req,
-        prompt: `${req.prompt}\n\n${rangeNote(from, to, pageCount!)}`,
-        promptVersion: `${req.promptVersion}+pages`,
-      }),
-    );
+    const answer = await provider.extract({
+      ...req,
+      prompt: `${req.prompt}\n\n${note(from, to)}`,
+      promptVersion: `${req.promptVersion}+${req.sheetText !== undefined ? 'rows' : 'pages'}`,
+    }).catch((err) => {
+      // A range with no qualifying line (every row zero) is not a failure of the document.
+      if (/at least 1 element/.test(String((err as Error)?.message))) return null;
+      throw err;
+    });
+    if (answer) answers.push(answer);
   }
+  if (answers.length === 0) return provider.extract(req);
   const sum = (f: (a: ExtractionResponse) => number | null) =>
     answers.every((a) => f(a) === null) ? null : answers.reduce((n, a) => n + (f(a) ?? 0), 0);
   return {
     result: mergeRanges(answers.map((a) => a.result)),
-    raw: { pages: ranges.map(([from, to], i) => ({ from, to, response: answers[i]!.raw })) },
+    raw: { ranges: ranges.map(([from, to]) => ({ from, to })), responses: answers.map((a) => a.raw) },
     model: [...new Set(answers.map((a) => a.model))].join(', '),
     provider: answers[0]!.provider,
     latencyMs: answers.reduce((n, a) => n + a.latencyMs, 0),

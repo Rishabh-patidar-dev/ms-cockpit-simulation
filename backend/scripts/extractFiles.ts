@@ -56,13 +56,20 @@ for (const file of files) {
 for (const job of jobs) {
   try {
     const sheetText = isSpreadsheet(job.kind) ? workbookToText(await readSpreadsheet(job.content, job.kind, job.name)) : undefined;
-    const res = await provider.extract({
-      document: job.content,
-      sheetText,
-      prompt: sheetText !== undefined ? `${GENERIC_EXTRACTION_PROMPT}\n\n---\n${SPREADSHEET_NOTES}` : GENERIC_EXTRACTION_PROMPT,
-      promptVersion: 'script',
-      timeoutMs: env.EXTRACTION_TIMEOUT_MS,
-    });
+    // As the worker does: a long PDF is read a few pages per request.
+    const res = await extractByPages(
+      provider,
+      {
+        document: job.content,
+        sheetText,
+        prompt: sheetText !== undefined ? `${GENERIC_EXTRACTION_PROMPT}\n\n---\n${SPREADSHEET_NOTES}` : GENERIC_EXTRACTION_PROMPT,
+        promptVersion: 'script',
+        timeoutMs: env.EXTRACTION_TIMEOUT_MS,
+      },
+      job.kind === 'pdf' ? countPdfPages(job.content) : null,
+      env.EXTRACTION_PAGES_PER_CALL,
+      env.EXTRACTION_ROWS_PER_CALL,
+    );
     const result = cleanExtraction(res.result);
     const out = path.join(outDir, `${job.label.replace(/[^\w.-]+/g, '_')}.json`);
     await fs.writeFile(out, JSON.stringify({ file: job.label, model: res.model, latencyMs: res.latencyMs, result }, null, 2));

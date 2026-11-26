@@ -177,12 +177,13 @@ export async function runExtractionForRecord(recordId: string): Promise<void> {
   let lastError: ExtractionError | null = null;
   for (let tries = 1; tries <= env.EXTRACTION_MAX_ATTEMPTS; tries++) {
     try {
-      // A long PDF goes a few pages at a time, so no line is dropped from a long answer.
+      // A long PDF or spreadsheet goes a few pages or rows at a time, so no line is dropped from a long answer.
       const response = await extractByPages(
         getProvider(),
         { document, sheetText, prompt, promptVersion, timeoutMs: env.EXTRACTION_TIMEOUT_MS },
         record.sourceDocument.pageCount,
         env.EXTRACTION_PAGES_PER_CALL,
+        env.EXTRACTION_ROWS_PER_CALL,
       );
 
       await persistExtraction(recordId, cleanExtraction(response.result), profile?.id ?? null);
