@@ -13,6 +13,7 @@ import { buildSalesOrderPdf, salesOrderFromRecord, salesOrderOptions, salesOrder
 import { lineParamsSchema, listQuerySchema } from './query.js';
 import { sapLinkFor } from '../sapApi/shareLink.js';
 import { loadDocumentContent } from '../../services/storage.js';
+import { emailNote, isOutlookMessage, noPoReason, openEmail } from '../../services/outlookUpload.js';
 import { isSpreadsheet, kindOfMimeType } from '../../services/documentKind.js';
 import { readSpreadsheet, SpreadsheetError } from '../../services/spreadsheet.js';
 
@@ -128,10 +129,27 @@ recordsRouter.post('/bulk-approve', async (req, res, next) => {
 recordsRouter.post('/', upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) throw badRequest('No file was uploaded.', 'NO_FILE');
-    const result = await records.createRecord(actorOf(req), req.file, {
+    const meta = {
       vendorHint: typeof req.body?.vendorHint === 'string' ? req.body.vendorHint : undefined,
       notes: typeof req.body?.notes === 'string' ? req.body.notes : undefined,
-    });
+    };
+    // An Outlook email saved as .msg: each PO attached to it becomes a record of its own. The
+    // first is answered as a single upload would be; the rest come in `more`, each with the
+    // attachment it was made from.
+    if (isOutlookMessage(req.file.buffer)) {
+      const opened = openEmail(req.file.buffer);
+      if (opened.pos.length === 0) throw badRequest(noPoReason(req.file.originalname, opened), 'NO_PO_IN_EMAIL');
+      const notes = [emailNote(opened.mail, req.file.originalname), meta.notes?.trim()].filter(Boolean).join('. ');
+      const made = [];
+      for (const po of opened.pos) {
+        const r = await records.createRecord(actorOf(req), { buffer: po.content, originalname: po.name, mimetype: po.mimetype }, { ...meta, notes });
+        made.push({ ...r, source: po.name });
+      }
+      const [first, ...more] = made;
+      res.status(201).json({ ...first, more });
+      return;
+    }
+    const result = await records.createRecord(actorOf(req), req.file, meta);
     res.status(201).json(result);
   } catch (err) {
     next(err);

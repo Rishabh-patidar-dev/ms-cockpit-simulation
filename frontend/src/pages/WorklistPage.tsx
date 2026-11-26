@@ -7,7 +7,7 @@ import { MAX_BATCH, summarise, uploadAndPublishAll, type BatchOutcome } from '..
 import { holdSummary, readyIds, summariseBulk } from '../lib/bulkApprove';
 import { parseDecimal } from '../lib/decimal';
 import { ago } from '../lib/format';
-import { ACCEPT_ATTRIBUTE, refusalFor } from '../lib/fileKinds';
+import { ACCEPT_ATTRIBUTE, isOutlookEmail, refusalFor } from '../lib/fileKinds';
 import { readWorklist, rememberWorklist, writeWorklist, type SortKey, type WorklistState } from '../lib/worklistState';
 import { StatusBadge } from '../components/StatusBadge';
 import { statusTone, toneClass } from '../lib/status';
@@ -289,7 +289,8 @@ export function WorklistPage() {
       setUploadError('An upload is still running. Add more when it has finished.');
       return;
     }
-    if (files.length === 1) {
+    // One Outlook email can hold several POs, so it goes the batch way: every PO in it is published.
+    if (files.length === 1 && !isOutlookEmail(files[0]!)) {
       const file = files[0]!;
       // The server checks the real content; this only refuses a file that is plainly something else.
       const refused = refusalFor(file);
@@ -382,7 +383,7 @@ export function WorklistPage() {
             <div>
               <h1>Purchase orders</h1>
               <p className="cap">
-                Drop PO files (PDF, Excel or CSV) anywhere on this page &mdash; up to {MAX_BATCH} at once &mdash; or press <kbd>/</kbd> to search.
+                Drop PO files (PDF, Excel, CSV or Outlook email) anywhere on this page &mdash; up to {MAX_BATCH} at once &mdash; or press <kbd>/</kbd> to search.
                 {mail.data?.enabled && !mailNeedsConnect && (
                   <> POs emailed to <b>{mail.data.mailbox}</b> are added automatically.</>
                 )}
@@ -541,7 +542,7 @@ export function WorklistPage() {
           </div>
         ) : !rows.length ? (
           <div className="empty">
-            {q ? `Nothing matches “${q}”.` : 'Nothing here yet. Drop one or more POs (PDF, Excel or CSV) to get started.'}
+            {q ? `Nothing matches “${q}”.` : 'Nothing here yet. Drop one or more POs (PDF, Excel, CSV or Outlook email) to get started.'}
           </div>
         ) : (
           <div className="ledger-wrap">

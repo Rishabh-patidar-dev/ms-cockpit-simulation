@@ -36,6 +36,12 @@ const schema = z.object({
   // FR-4 extraction
   EXTRACTION_PROVIDER: z.enum(['gemini', 'mock']).default('gemini'),
   GEMINI_API_KEY: z.string().optional().default(''),
+  /**
+   * Several keys, separated by commas, spaces or new lines. When one is expired, invalid or out of
+   * quota (the free tier gives 20 requests a day per model) the next is used at once. GEMINI_API_KEY,
+   * if also set, is tried after these.
+   */
+  GEMINI_API_KEYS: z.string().optional().default(''),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
   /**
    * One call to the model. Kept under five minutes: Node's fetch gives up waiting for a
@@ -49,6 +55,11 @@ const schema = z.object({
   GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.5-flash'),
   /** How many times an overloaded or rate-limited call is waited out before the attempt fails. */
   EXTRACTION_OVERLOAD_RETRIES: int(4),
+  /**
+   * A PDF longer than this is read a few pages per request (services/extraction/pages.ts): asked
+   * for hundreds of lines at once, the model stops early. 0 reads every PDF in one request.
+   */
+  EXTRACTION_PAGES_PER_CALL: int(6),
   EXTRACTION_MAX_ATTEMPTS: int(3),
   EXTRACTION_POLL_MS: int(2000),
   CONFIDENCE_THRESHOLD: num(0.85),

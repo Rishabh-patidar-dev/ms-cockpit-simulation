@@ -172,4 +172,25 @@ describe('uploadAndPublishAll', () => {
     const out = await uploadAndPublishAll([a, b, c], api);
     expect(out.map((o) => o.kind)).toEqual(['queued', 'skipped', 'queued']);
   });
+
+  it('publishes every PO an Outlook email held, each named after its attachment', async () => {
+    const published: string[] = [];
+    const dup = [{ recordId: 'old', correlationId: 'PO-OLD', status: 'SO_CREATED' }];
+    const api: BatchApi = {
+      async upload() {
+        return {
+          record: { id: 'r1' }, duplicates: [], source: 'po.pdf',
+          more: [{ record: { id: 'r2' }, duplicates: [], source: 'schedule.xlsx' }, { record: { id: 'r3' }, duplicates: dup, source: 'again.pdf' }],
+        };
+      },
+      async publish(id) { published.push(id); },
+    };
+    const out = await uploadAndPublishAll([new File(['x'], 'Oct schedule.msg')], api, { hash: async () => null });
+    expect(published).toEqual(['r1', 'r2']);
+    expect(out.map((o) => [o.file, o.kind])).toEqual([
+      ['Oct schedule.msg › po.pdf', 'queued'],
+      ['Oct schedule.msg › schedule.xlsx', 'queued'],
+      ['Oct schedule.msg › again.pdf', 'draft'],
+    ]);
+  });
 });

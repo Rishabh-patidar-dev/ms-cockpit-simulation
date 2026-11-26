@@ -1,6 +1,7 @@
 import { GoogleGenAI, ThinkingLevel, Type, type Schema, type ThinkingConfig } from '@google/genai';
 import { env } from '../../config/env.js';
 import { HEADER_FIELDS, LINE_FIELDS, extractionResultSchema } from '../../domain/types.js';
+import { childLogger } from '../../lib/logger.js';
 import { ExtractionError, type ExtractionProvider, type ExtractionRequest, type ExtractionResponse } from './types.js';
 
 /**
@@ -39,6 +40,8 @@ export const RESPONSE_SCHEMA: Schema = {
   },
   required: ['header', 'lineItems'],
 };
+
+const log = childLogger('gemini');
 
 /** Transient conditions worth a retry; anything else fails the attempt outright. */
 function isRetryable(err: unknown): boolean {
@@ -94,17 +97,69 @@ export function thinkingFor(model: string, isSpreadsheet: boolean): ThinkingConf
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** GEMINI_API_KEYS (comma, space or newline separated), then GEMINI_API_KEY, without repeats. */
+export function configuredKeys(list: string = env.GEMINI_API_KEYS, single: string = env.GEMINI_API_KEY): string[] {
+  return [...new Set([...list.split(/[\s,;]+/), single].map((k) => k.trim()).filter(Boolean))];
+}
+
+/**
+ * A fault of the key rather than of the request or of Gemini's load: expired, invalid, not
+ * allowed, or out of quota (per minute or per day). With several keys the next one is used at
+ * once; with one, the error is handled as before (a quota error is waited out).
+ */
+export function isKeyProblem(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  const msg = String((err as Error)?.message ?? '');
+  if (status === 401 || status === 403 || status === 429) return true;
+  return /API[_ ]key (expired|not valid|invalid)|API_KEY_INVALID|API_KEY_EXPIRED|PERMISSION_DENIED|UNAUTHENTICATED|CONSUMER_SUSPENDED|RESOURCE_EXHAUSTED|exceeded your current quota|"code":\s*(401|403|429)/i.test(msg);
+}
+
+/** How long a key is passed over after it failed: an hour when spent for the day, a minute when rate-limited, hours when broken. */
+function restFor(err: unknown): number {
+  if (isDailyQuotaSpent(err)) return 3_600_000;
+  const rateLimited = (err as { status?: number })?.status === 429 || /RESOURCE_EXHAUSTED|quota|"code":\s*429/i.test(String((err as Error)?.message ?? ''));
+  return rateLimited ? 60_000 : 6 * 3_600_000;
+}
+
 export class GeminiExtractionProvider implements ExtractionProvider {
   readonly name = 'gemini';
-  private readonly client: GoogleGenAI;
+  private readonly clients: GoogleGenAI[];
+  /** Until when (epoch ms) each key is passed over. */
+  private readonly restingUntil: number[];
+  private current = 0;
 
-  constructor(apiKey: string = env.GEMINI_API_KEY) {
-    if (!apiKey) {
+  constructor(apiKeys: string | string[] = configuredKeys()) {
+    const keys = (Array.isArray(apiKeys) ? apiKeys : [apiKeys]).filter(Boolean);
+    if (keys.length === 0) {
       throw new Error(
-        'GEMINI_API_KEY is not set. Set it in backend/.env, or set EXTRACTION_PROVIDER=mock to run without it.',
+        'No Gemini API key is set. Set GEMINI_API_KEYS (or GEMINI_API_KEY) in backend/.env, or set EXTRACTION_PROVIDER=mock to run without it.',
       );
     }
-    this.client = new GoogleGenAI({ apiKey });
+    this.clients = keys.map((apiKey) => new GoogleGenAI({ apiKey }));
+    this.restingUntil = keys.map(() => 0);
+  }
+
+  private get client(): GoogleGenAI {
+    return this.clients[this.current]!;
+  }
+
+  /**
+   * After a key problem: rest this key and move to the next one that is not resting. False
+   * when there is no other key to try, so the caller handles the error as with a single key.
+   */
+  private nextKey(err: unknown): boolean {
+    if (this.clients.length < 2) return false;
+    this.restingUntil[this.current] = Date.now() + restFor(err);
+    const now = Date.now();
+    for (let step = 1; step < this.clients.length; step++) {
+      const i = (this.current + step) % this.clients.length;
+      if (this.restingUntil[i]! <= now) {
+        log.warn({ from: this.current + 1, to: i + 1 }, 'Gemini key failed (expired, invalid or out of quota); using the next key');
+        this.current = i;
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -113,7 +168,8 @@ export class GeminiExtractionProvider implements ExtractionProvider {
    * model this key cannot use is dropped rather than failing the record.
    */
   async extract(req: ExtractionRequest, sleep: (ms: number) => Promise<void> = wait): Promise<ExtractionResponse> {
-    const models = [env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter((m, i, all) => m && all.indexOf(m) === i);
+    const allModels = () => [env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter((m, i, all) => m && all.indexOf(m) === i);
+    let models = allModels();
     let lastErr: unknown;
     for (let retry = 0; retry <= env.EXTRACTION_OVERLOAD_RETRIES; retry++) {
       const model = models[retry % models.length]!;
@@ -121,6 +177,13 @@ export class GeminiExtractionProvider implements ExtractionProvider {
         return await this.extractWith(model, req);
       } catch (err) {
         const cause = err instanceof ExtractionError ? err.cause : err;
+        // A spent, expired or rate-limited key: the next key gets the same request at once,
+        // with both models again, and it does not count as one of the waits.
+        if (isKeyProblem(cause) && this.nextKey(cause)) {
+          models = allModels();
+          retry--;
+          continue;
+        }
         if (model !== env.GEMINI_MODEL && isModelMissing(cause)) {
           models.splice(models.indexOf(model), 1);
           continue;
@@ -132,7 +195,7 @@ export class GeminiExtractionProvider implements ExtractionProvider {
           models.splice(models.indexOf(model), 1);
           if (models.length === 0) {
             throw new ExtractionError(
-              `The Gemini key has used its daily allowance for every model it is set to use (${[env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter(Boolean).join(', ')}). The free tier allows 20 requests a day per model; retry tomorrow, or enable billing on the key's Google AI Studio project.`,
+              `The Gemini key${this.clients.length > 1 ? 's have' : ' has'} used ${this.clients.length > 1 ? 'their' : 'its'} daily allowance for every model it is set to use (${[env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter(Boolean).join(', ')}). The free tier allows 20 requests a day per model; retry tomorrow, or enable billing on the key's Google AI Studio project.`,
               false,
               cause,
             );

@@ -30,7 +30,7 @@ vi.mock('@google/genai', async (importOriginal) => {
 });
 
 const { env } = await import('../../config/env.js');
-const { GeminiExtractionProvider, isOverloaded, overloadWaitMs, thinkingFor } = await import('./gemini.js');
+const { GeminiExtractionProvider, configuredKeys, isKeyProblem, isOverloaded, overloadWaitMs, thinkingFor } = await import('./gemini.js');
 
 const pdfReq = { document: Buffer.from('%PDF-1.4'), prompt: 'P', promptVersion: 'v', timeoutMs: 1000 };
 const sheetReq = { ...pdfReq, document: Buffer.from('PK\x03\x04'), sheetText: 'Row 1: A1=PO | B1=77' };
@@ -123,4 +123,50 @@ it('asks Gemini 2.5 for a thinking budget rather than a level', () => {
   expect(thinkingFor('gemini-2.5-flash', true)).toEqual({ thinkingBudget: 512 });
   expect(thinkingFor('gemini-3.6-flash', true)).toEqual({ thinkingLevel: 'LOW' });
   expect(thinkingFor('gemini-3.6-flash', false)).toBeUndefined();
+});
+
+describe('several keys', () => {
+  const spent = () => {
+    throw Object.assign(new Error('{"error":{"code":429,"message":"Generate content requests per day limit exceeded on Free Tier."}}'), { status: 429 });
+  };
+  const expired = () => {
+    throw Object.assign(new Error('{"error":{"code":400,"message":"API key expired. Please renew the API key.","status":"INVALID_ARGUMENT"}}'), { status: 400 });
+  };
+
+  it('moves to the next key at once when a key is spent for the day, on the main model again', async () => {
+    answers = [spent, ok];
+    const r = await new GeminiExtractionProvider(['k1', 'k2']).extract(pdfReq, noSleep);
+    expect(calls.map((c) => c.model)).toEqual(['gemini-3.6-flash', 'gemini-3.6-flash']);
+    expect(noSleep).not.toHaveBeenCalled();
+    expect(r.model).toBe('gemini-3.6-flash');
+  });
+
+  it('passes over an expired key, and keeps using the key that worked', async () => {
+    const p = new GeminiExtractionProvider(['k1', 'k2', 'k3']);
+    answers = [expired, ok, ok];
+    await p.extract(pdfReq, noSleep);
+    await p.extract(pdfReq, noSleep);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('when every key is spent, still tries the fallback model, then says why', async () => {
+    answers = [spent, spent, spent, spent];
+    const err = await new GeminiExtractionProvider(['k1', 'k2']).extract(pdfReq, noSleep).catch((e) => e);
+    expect(calls.map((c) => c.model)).toEqual(['gemini-3.6-flash', 'gemini-3.6-flash', 'gemini-3.5-flash']);
+    expect(err.message).toMatch(/keys have used their daily allowance/);
+    expect(noSleep).not.toHaveBeenCalled();
+  });
+
+  it('does not treat high demand as a key problem', async () => {
+    answers = [busy, ok];
+    await new GeminiExtractionProvider(['k1', 'k2']).extract(pdfReq, noSleep);
+    expect(noSleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the key list in any separator, then the single key, without repeats', () => {
+    expect(configuredKeys('k1, k2\nk3;k1', 'k4')).toEqual(['k1', 'k2', 'k3', 'k4']);
+    expect(configuredKeys('', '')).toEqual([]);
+    expect(isKeyProblem(new Error('API key expired. Please renew the API key.'))).toBe(true);
+    expect(isKeyProblem({ status: 503 })).toBe(false);
+  });
 });

@@ -85,7 +85,7 @@ export async function deleteDocument(recordId: string): Promise<void> {
  * Page count without pulling in a PDF library: count the /Type /Page objects and fall
  * back to null rather than guessing. Only used for display, never for logic.
  */
-function countPdfPages(buffer: Buffer): number | null {
+export function countPdfPages(buffer: Buffer): number | null {
   const text = buffer.toString('latin1');
   const matches = text.match(/\/Type\s*\/Page[^s]/g);
   return matches ? matches.length : null;

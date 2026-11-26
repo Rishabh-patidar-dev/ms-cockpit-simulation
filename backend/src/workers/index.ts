@@ -78,7 +78,8 @@ async function extractionTick() {
   // record has sat there longer than a full extraction with all its retries could
   // take, requeue it, so a restart resumes the work instead of stranding it.
   const stuckSince = new Date(
-    Date.now() - (env.EXTRACTION_TIMEOUT_MS + maxOverloadWaitMs()) * env.EXTRACTION_MAX_ATTEMPTS - 60_000,
+    // A long PDF is several requests (extraction/pages.ts), so a few times one request's worst case.
+    Date.now() - (env.EXTRACTION_TIMEOUT_MS + maxOverloadWaitMs()) * env.EXTRACTION_MAX_ATTEMPTS * 3 - 60_000,
   );
   const stuck = await prisma.pORecord.findMany({
     where: { status: 'PROCESSING', deletedAt: null, statusChangedAt: { lt: stuckSince } },

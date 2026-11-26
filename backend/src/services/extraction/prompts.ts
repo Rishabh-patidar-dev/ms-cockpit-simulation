@@ -50,7 +50,7 @@ ${vendorPrompt}`;
 }
 
 /** Bumped whenever SPREADSHEET_NOTES changes; added to the prompt version of a spreadsheet run. */
-export const SPREADSHEET_PROMPT_VERSION = 'sheet-v1';
+export const SPREADSHEET_PROMPT_VERSION = 'sheet-v2';
 
 /**
  * Added to the prompt when the PO is a spreadsheet rather than a PDF. The cells arrive as
@@ -63,7 +63,9 @@ Spreadsheet rules:
 - Rows are laid out as a table: find the header row that names the columns (part number, description, quantity, price...), and read each following row as one line item. A label for a header value may sit in the cell to its left or above it.
 - A value may be a calculated result; take it as given. Do not calculate any value yourself.
 - Cells marked "(hidden)" were hidden in Excel. They usually hold older orders, past months or helper data. Read labels and titles from them where needed, but take ordered quantities and prices from visible cells unless the visible cells hold nothing for that field.
-- The same sheet may show quantities for several POs or months side by side (for example "PO 26-27 220", "PO 26-27 (06.10.2026)", "5-Oct", "Apr FC"). Take quantities only from the column for the newest purchase order, never from forecast ("FC") or delivery-month columns, and put that PO's number and date in the header. If no column clearly holds the ordered quantity, return null quantities with low confidence rather than choosing a month or forecast column.
-- Leave out rows with no ordered quantity in that column, and rows that are notes, totals or terms.
+- The same sheet may show quantities for several POs or months side by side (for example "PO 26-27 220", "PO 26-27 (06.10.2026)", "5-Oct", "Apr FC"). When there is a column for a purchase order, take quantities only from the newest one, never from forecast ("FC") or delivery-month columns, and put that PO's number and date in the header.
+- A monthly delivery schedule may have no column for a PO's quantity: each row carries its own PO number (and often an open quantity such as 9999999), and the quantities are by month ("Oct'26 Firm Plan", "Nov 26", ...). Then take each row's quantity from the month marked firm ("Firm", "Firm Plan"), or, if none is marked, from the first month column; put that column's heading in deliveryDate as written. Later months are a forecast, not an order. Never use an open quantity like 9999999 or a "Sum" column as the quantity.
+- If the rows carry different PO numbers, return the header poNumber as null with a low confidence; the reviewer decides. Do not pick one.
+- Leave out rows with no ordered quantity (blank or 0) in that column, and rows that are notes, totals or terms. If no row has one, return the rows anyway with null quantities and a low confidence, rather than no line items at all.
 - Where a row has an old and a new price ("Price", "New price from ..."), unitPrice is the new one.
 - Confidence describes how sure you are that you picked the right cell, since every value is legible. Use a low confidence whenever the column to use was not clearly labelled.`;

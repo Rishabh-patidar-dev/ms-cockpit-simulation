@@ -8,6 +8,8 @@ describe('refusalFor', () => {
     expect(refusalFor({ name: 'po.csv', type: 'text/csv' })).toBeNull();
     expect(refusalFor({ name: 'po.csv', type: 'application/vnd.ms-excel' })).toBeNull();
     expect(refusalFor({ name: 'scan', type: '' })).toBeNull();
+    expect(refusalFor({ name: 'Schedule for Oct.msg', type: '' })).toBeNull();
+    expect(refusalFor({ name: 'po.msg', type: 'application/vnd.ms-outlook' })).toBeNull();
   });
 
   it('turns away other files, and asks for .xlsx in place of .xls', () => {

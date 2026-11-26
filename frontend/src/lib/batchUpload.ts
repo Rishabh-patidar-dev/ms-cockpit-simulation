@@ -29,6 +29,10 @@ export type BatchOutcome =
 export interface UploadResult {
   record: { id: string };
   duplicates: Array<{ recordId: string; correlationId: string; status: string }>;
+  /** The attachment this record was made from, when the upload was an Outlook email. */
+  source?: string;
+  /** An Outlook email with several POs: the records made from the others. */
+  more?: UploadResult[];
 }
 
 export interface BatchApi {
@@ -108,6 +112,8 @@ export async function uploadAndPublishAll(
   let done = files.length - work.length;
   onProgress?.(done, files.length);
   let aborted = false;
+  /** Further records from an Outlook email that held several POs, reported after the files. */
+  const extra: BatchOutcome[] = [];
 
   const one = async (i: number) => {
     const file = files[i]!;
@@ -123,6 +129,18 @@ export async function uploadAndPublishAll(
       outcomes[i] = { file: file.name, kind: 'failed', reason: reasonOf(err, 'The upload did not complete.') };
       return;
     }
+    // An Outlook email gives one record per PO attached; each is settled on its own.
+    const results = [uploaded, ...(uploaded.more ?? [])];
+    const settled: BatchOutcome[] = [];
+    for (const result of results) {
+      const label = result.source ? `${file.name} › ${result.source}` : file.name;
+      settled.push(await settle(label, result));
+    }
+    outcomes[i] = settled[0]!;
+    extra.push(...settled.slice(1));
+  };
+
+  const settle = async (label: string, uploaded: UploadResult): Promise<BatchOutcome> => {
     const recordId = uploaded.record.id;
 
     // The same bytes as a record already in the system. Publishing would either be refused or
@@ -133,22 +151,21 @@ export async function uploadAndPublishAll(
         .slice(0, 2)
         .map((d) => `${d.correlationId} (${d.status})`)
         .join(', ');
-      outcomes[i] = {
-        file: file.name,
+      return {
+        file: label,
         kind: 'draft',
         recordId,
         reason: `Identical to ${named}${uploaded.duplicates.length > 2 ? ' and others' : ''}. Left as a draft; open it to publish with a reason.`,
       };
-      return;
     }
 
     try {
       await api.publish(recordId);
-      outcomes[i] = { file: file.name, kind: 'queued', recordId };
+      return { file: label, kind: 'queued', recordId };
     } catch (err) {
       if (isSessionExpired(err)) aborted = true;
-      outcomes[i] = {
-        file: file.name,
+      return {
+        file: label,
         kind: 'draft',
         recordId,
         reason: `Uploaded, but not sent for extraction: ${reasonOf(err, 'the request did not complete')}. Open it and press Publish.`,
@@ -167,7 +184,7 @@ export async function uploadAndPublishAll(
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, work.length) }, worker));
 
-  return outcomes as BatchOutcome[];
+  return [...(outcomes as BatchOutcome[]), ...extra];
 }
 
 export function summarise(outcomes: BatchOutcome[]) {

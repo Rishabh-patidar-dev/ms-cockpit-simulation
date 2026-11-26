@@ -28,6 +28,7 @@ import {
 import { isSpreadsheet, kindOfMimeType } from '../documentKind.js';
 import { readSpreadsheet, workbookToText } from '../spreadsheet.js';
 import { ExtractionError, type ExtractionProvider } from './types.js';
+import { extractByPages } from './pages.js';
 
 const log = childLogger('extraction');
 
@@ -176,13 +177,13 @@ export async function runExtractionForRecord(recordId: string): Promise<void> {
   let lastError: ExtractionError | null = null;
   for (let tries = 1; tries <= env.EXTRACTION_MAX_ATTEMPTS; tries++) {
     try {
-      const response = await getProvider().extract({
-        document,
-        sheetText,
-        prompt,
-        promptVersion,
-        timeoutMs: env.EXTRACTION_TIMEOUT_MS,
-      });
+      // A long PDF goes a few pages at a time, so no line is dropped from a long answer.
+      const response = await extractByPages(
+        getProvider(),
+        { document, sheetText, prompt, promptVersion, timeoutMs: env.EXTRACTION_TIMEOUT_MS },
+        record.sourceDocument.pageCount,
+        env.EXTRACTION_PAGES_PER_CALL,
+      );
 
       await persistExtraction(recordId, cleanExtraction(response.result), profile?.id ?? null);
 
