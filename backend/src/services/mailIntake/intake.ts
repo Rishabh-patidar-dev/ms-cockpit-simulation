@@ -7,7 +7,7 @@ import { childLogger } from '../../lib/logger.js';
 import { writeAudit } from '../audit.js';
 import { notify, notifyIntegration } from '../notifications/notify.js';
 import { createRecord, publishRecord, type Actor } from '../records.js';
-import { looksLikePdf } from '../storage.js';
+import { ACCEPTED_NAME, detectDocumentKind, looksLikeLegacyExcel, MIME_TYPES } from '../documentKind.js';
 import { mailConnection, NOT_CONNECTED, storedTokens } from './delegated.js';
 import { GraphMailSource, type MailMessage, type MailSource } from './source.js';
 
@@ -17,7 +17,7 @@ const log = childLogger('mail-intake');
 export const INTAKE_USER_EMAIL = 'email-intake@cockpit.local';
 export const INTAKE_USER_NAME = 'Email intake';
 
-/** The most PDFs taken from one mail, the same limit as one drag-and-drop upload. */
+/** The most PO files (PDF or spreadsheet) taken from one mail, the same limit as one drag-and-drop upload. */
 const MAX_PDFS_PER_MAIL = 50;
 
 // ------------------------------------------------------------------ the rules
@@ -119,15 +119,23 @@ async function handleMessage(source: MailSource, deps: IntakeDeps, opts: IntakeO
   }
 
   const attachments = await source.getAttachments(message, opts.maxBytes);
-  const tooLarge = attachments.filter((a) => a.content === null && /\.pdf$/i.test(a.name)).map((a) => a.name);
-  const pdfs = attachments.filter((a): a is typeof a & { content: Buffer } => a.content !== null && looksLikePdf(a.content));
+  const tooLarge = attachments.filter((a) => a.content === null && ACCEPTED_NAME.test(a.name)).map((a) => a.name);
+  // A PO is a PDF or a spreadsheet (.xlsx, .csv), recognised by its bytes. Logos, signatures
+  // and Word files in the same mail are passed over.
+  const poFiles = attachments.flatMap((a) => {
+    const kind = a.content ? detectDocumentKind(a.content, a.name) : null;
+    return a.content && kind ? [{ ...a, content: a.content, mimetype: MIME_TYPES[kind] }] : [];
+  });
+  const legacyExcel = attachments.filter((a) => a.content && looksLikeLegacyExcel(a.content)).map((a) => a.name);
 
-  if (pdfs.length === 0) {
+  if (poFiles.length === 0) {
     const detail = tooLarge.length
-      ? `PDF over the ${(opts.maxBytes / 1024 / 1024).toFixed(0)} MB limit: ${tooLarge.join(', ')}.`
-      : attachments.length
-        ? `No PDF among the attachments (${attachments.map((a) => a.name).join(', ')}).`
-        : 'The mail has no attachments.';
+      ? `Over the ${(opts.maxBytes / 1024 / 1024).toFixed(0)} MB limit: ${tooLarge.join(', ')}.`
+      : legacyExcel.length
+        ? `Excel 97–2003 workbook(s) (.xls), which cannot be read: ${legacyExcel.join(', ')}. Ask the sender for .xlsx or PDF.`
+        : attachments.length
+          ? `No PDF or Excel PO among the attachments (${attachments.map((a) => a.name).join(', ')}).`
+          : 'The mail has no attachments.';
     return setAside('NO_PDF', detail);
   }
 
@@ -137,10 +145,10 @@ async function handleMessage(source: MailSource, deps: IntakeDeps, opts: IntakeO
 
   const created: { recordId: string; correlationId: string; name: string }[] = [];
   const drafts: string[] = [];
-  for (const pdf of pdfs.slice(0, MAX_PDFS_PER_MAIL)) {
-    if (done.has(sha256(pdf.content))) continue; // imported on a pass that did not finish
-    const rec = await deps.createRecord({ buffer: pdf.content, originalname: pdf.name, mimetype: 'application/pdf' }, notes, email.id);
-    created.push({ ...rec, name: pdf.name });
+  for (const file of poFiles.slice(0, MAX_PDFS_PER_MAIL)) {
+    if (done.has(sha256(file.content))) continue; // imported on a pass that did not finish
+    const rec = await deps.createRecord({ buffer: file.content, originalname: file.name, mimetype: file.mimetype }, notes, email.id);
+    created.push({ ...rec, name: file.name });
     await deps.audit(rec.recordId, `${notes} (received ${message.receivedAt.toISOString()})`);
 
     // Like a drag-and-drop upload: a PDF seen before stays a draft for a person to decide on.
@@ -157,10 +165,11 @@ async function handleMessage(source: MailSource, deps: IntakeDeps, opts: IntakeO
   }
 
   const skipped = [
-    ...(pdfs.length > MAX_PDFS_PER_MAIL
-      ? [`${pdfs.length - MAX_PDFS_PER_MAIL} PDF(s) over the limit of ${MAX_PDFS_PER_MAIL} per mail were not imported`]
+    ...(poFiles.length > MAX_PDFS_PER_MAIL
+      ? [`${poFiles.length - MAX_PDFS_PER_MAIL} PDF(s) over the limit of ${MAX_PDFS_PER_MAIL} per mail were not imported`]
       : []),
     ...(tooLarge.length ? [`too large to import: ${tooLarge.join(', ')}`] : []),
+    ...(legacyExcel.length ? [`Excel 97–2003 (.xls) cannot be read, save as .xlsx: ${legacyExcel.join(', ')}`] : []),
   ];
   const detail =
     [

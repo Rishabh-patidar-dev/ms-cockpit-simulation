@@ -37,7 +37,18 @@ const schema = z.object({
   EXTRACTION_PROVIDER: z.enum(['gemini', 'mock']).default('gemini'),
   GEMINI_API_KEY: z.string().optional().default(''),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
-  EXTRACTION_TIMEOUT_MS: int(120_000),
+  /**
+   * One call to the model. Kept under five minutes: Node's fetch gives up waiting for a
+   * reply at 300 s, which would surface as a bare "fetch failed".
+   */
+  EXTRACTION_TIMEOUT_MS: int(240_000),
+  /**
+   * Tried when the main model answers "high demand" (503) or "quota" (429). Those
+   * answers are not billed, so waiting them out costs time, not money. Empty: no fallback.
+   */
+  GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.5-flash'),
+  /** How many times an overloaded or rate-limited call is waited out before the attempt fails. */
+  EXTRACTION_OVERLOAD_RETRIES: int(4),
   EXTRACTION_MAX_ATTEMPTS: int(3),
   EXTRACTION_POLL_MS: int(2000),
   CONFIDENCE_THRESHOLD: num(0.85),

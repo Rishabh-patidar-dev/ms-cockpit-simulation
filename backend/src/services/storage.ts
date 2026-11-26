@@ -3,6 +3,9 @@ import path from 'node:path';
 import { env } from '../config/env.js';
 import { prisma } from '../db/client.js';
 import { sha256 } from '../lib/ids.js';
+import { STORED_NAMES, type DocumentKind } from './documentKind.js';
+
+export { looksLikePdf } from './documentKind.js';
 
 /**
  * FR-1.1 / FR-1.9 — the original PDF is stored unmodified and stays viewable at every
@@ -29,16 +32,16 @@ export interface StoredDocument {
   pageCount: number | null;
 }
 
-export async function storeDocument(recordId: string, buffer: Buffer): Promise<StoredDocument> {
+export async function storeDocument(recordId: string, buffer: Buffer, kind: DocumentKind = 'pdf'): Promise<StoredDocument> {
   const dir = path.join(env.paths.documents, recordId);
   await fs.mkdir(dir, { recursive: true });
-  const storagePath = path.join(dir, 'original.pdf');
+  const storagePath = path.join(dir, STORED_NAMES[kind]);
   await fs.writeFile(storagePath, buffer);
   return {
     storagePath,
     contentHash: sha256(buffer),
     byteSize: buffer.byteLength,
-    pageCount: countPdfPages(buffer),
+    pageCount: kind === 'pdf' ? countPdfPages(buffer) : null,
   };
 }
 
@@ -86,9 +89,4 @@ function countPdfPages(buffer: Buffer): number | null {
   const text = buffer.toString('latin1');
   const matches = text.match(/\/Type\s*\/Page[^s]/g);
   return matches ? matches.length : null;
-}
-
-/** FR-1.2 — validate by content, not by filename extension (NFR-3.4). */
-export function looksLikePdf(buffer: Buffer): boolean {
-  return buffer.subarray(0, 5).toString('latin1') === '%PDF-';
 }

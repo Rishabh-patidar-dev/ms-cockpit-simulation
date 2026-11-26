@@ -135,6 +135,46 @@ describe('runMailIntakeOnce', () => {
     expect(db.records.map((r) => r.name)).toEqual(['scan.PDF']);
   });
 
+  it('takes Excel and CSV POs as well as PDFs, and passes over other files', async () => {
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('PO').addRow(['PO number', 'PO-77']);
+    const xlsx = Buffer.from(await wb.xlsx.writeBuffer());
+    const m = mail();
+    const box = new FakeMailbox([m], {
+      [m.id]: [
+        pdf('po.pdf'),
+        { name: 'schedule.xlsx', contentType: 'application/octet-stream', size: xlsx.length, content: xlsx },
+        { name: 'lines.csv', contentType: 'text/csv', size: 20, content: Buffer.from('Part,Qty\nA-1,10\n') },
+        { name: 'notes.docx', contentType: 'x', size: 4, content: Buffer.from('PK\x03\x04word/document.xml') },
+      ],
+    });
+    const db = fakeDb();
+    const created: string[] = [];
+    const createRecord = db.deps.createRecord;
+    db.deps.createRecord = async (file, notes, emailId) => {
+      created.push(`${file.originalname}:${file.mimetype}`);
+      return createRecord(file, notes, emailId);
+    };
+
+    const [res] = await runMailIntakeOnce(box, db.deps, opts);
+
+    expect(res?.outcome).toBe('IMPORTED');
+    expect(created).toEqual([
+      'po.pdf:application/pdf',
+      'schedule.xlsx:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'lines.csv:text/csv',
+    ]);
+  });
+
+  it('sets aside an old .xls workbook and asks for .xlsx', async () => {
+    const m = mail();
+    const xls = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]);
+    const box = new FakeMailbox([m], { [m.id]: [{ name: 'po.xls', contentType: 'application/vnd.ms-excel', size: 10, content: xls }] });
+    const [res] = await runMailIntakeOnce(box, fakeDb().deps, opts);
+    expect(res).toMatchObject({ outcome: 'NO_PDF', detail: expect.stringContaining('.xlsx') });
+  });
+
   it('sets aside a mail from a sender who is not allowed, without reading its attachments', async () => {
     const m = mail({ fromAddress: 'spam@elsewhere.example' });
     const box = new FakeMailbox([m], { [m.id]: [pdf('po.pdf')] });

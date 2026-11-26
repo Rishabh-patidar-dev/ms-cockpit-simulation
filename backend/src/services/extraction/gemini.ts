@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, type Schema } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type, type Schema, type ThinkingConfig } from '@google/genai';
 import { env } from '../../config/env.js';
 import { HEADER_FIELDS, LINE_FIELDS, extractionResultSchema } from '../../domain/types.js';
 import { ExtractionError, type ExtractionProvider, type ExtractionRequest, type ExtractionResponse } from './types.js';
@@ -57,6 +57,43 @@ function isRetryable(err: unknown): boolean {
   );
 }
 
+/** Gemini's own "try again later": overloaded (503) or over quota (429). Neither is billed. */
+export function isOverloaded(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  if (status === 503 || status === 429) return true;
+  const msg = String((err as Error)?.message ?? '');
+  return /"code":\s*(503|429)|high demand|UNAVAILABLE|RESOURCE_EXHAUSTED|exceeded your current quota/i.test(msg);
+}
+
+/**
+ * The key's daily allowance for this model is spent (the free tier gives 20 requests a day).
+ * Waiting minutes cannot help; another model, which has its own allowance, might.
+ */
+export const isDailyQuotaSpent = (err: unknown) => /per day|PerDay/i.test(String((err as Error)?.message ?? ''));
+
+/** The model is not offered to this key (retired, or not yet enabled). */
+const isModelMissing = (err: unknown) =>
+  (err as { status?: number })?.status === 404 || /"code":\s*404|NOT_FOUND/.test(String((err as Error)?.message ?? ''));
+
+/** Seconds waited before each retry of an overloaded call: 10, 20, 40, 60, 60, ... */
+export const overloadWaitMs = (retry: number) => Math.min(60_000, 10_000 * 2 ** (retry - 1));
+
+/** The longest an extraction can spend waiting out overload, for the worker's stuck-record rule. */
+export const maxOverloadWaitMs = () =>
+  Array.from({ length: env.EXTRACTION_OVERLOAD_RETRIES }, (_, i) => overloadWaitMs(i + 1) + 30_000).reduce((a, b) => a + b, 0);
+
+/**
+ * How hard the model should think. A spreadsheet arrives as typed values, so there is
+ * nothing to decipher and long reasoning only costs time (it pushed a 30-row sheet past
+ * the time limit). Gemini 3 takes a level; Gemini 2.5 takes a token budget.
+ */
+export function thinkingFor(model: string, isSpreadsheet: boolean): ThinkingConfig | undefined {
+  if (!isSpreadsheet) return undefined;
+  return /^gemini-2\./.test(model) ? { thinkingBudget: 512 } : { thinkingLevel: ThinkingLevel.LOW };
+}
+
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export class GeminiExtractionProvider implements ExtractionProvider {
   readonly name = 'gemini';
   private readonly client: GoogleGenAI;
@@ -70,7 +107,46 @@ export class GeminiExtractionProvider implements ExtractionProvider {
     this.client = new GoogleGenAI({ apiKey });
   }
 
-  async extract(req: ExtractionRequest): Promise<ExtractionResponse> {
+  /**
+   * One extraction. An overloaded or rate-limited answer is waited out and tried again,
+   * alternating with GEMINI_FALLBACK_MODEL, before it counts as a failed attempt. A fallback
+   * model this key cannot use is dropped rather than failing the record.
+   */
+  async extract(req: ExtractionRequest, sleep: (ms: number) => Promise<void> = wait): Promise<ExtractionResponse> {
+    const models = [env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter((m, i, all) => m && all.indexOf(m) === i);
+    let lastErr: unknown;
+    for (let retry = 0; retry <= env.EXTRACTION_OVERLOAD_RETRIES; retry++) {
+      const model = models[retry % models.length]!;
+      try {
+        return await this.extractWith(model, req);
+      } catch (err) {
+        const cause = err instanceof ExtractionError ? err.cause : err;
+        if (model !== env.GEMINI_MODEL && isModelMissing(cause)) {
+          models.splice(models.indexOf(model), 1);
+          continue;
+        }
+        lastErr = err;
+        if (!isOverloaded(cause) || retry === env.EXTRACTION_OVERLOAD_RETRIES) throw err;
+        if (isDailyQuotaSpent(cause)) {
+          // This model is done for the day: carry on with the others, without waiting.
+          models.splice(models.indexOf(model), 1);
+          if (models.length === 0) {
+            throw new ExtractionError(
+              `The Gemini key has used its daily allowance for every model it is set to use (${[env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter(Boolean).join(', ')}). The free tier allows 20 requests a day per model; retry tomorrow, or enable billing on the key's Google AI Studio project.`,
+              false,
+              cause,
+            );
+          }
+          retry--;
+          continue;
+        }
+        await sleep(overloadWaitMs(retry + 1));
+      }
+    }
+    throw lastErr;
+  }
+
+  private async extractWith(model: string, req: ExtractionRequest): Promise<ExtractionResponse> {
     const started = Date.now();
     const controller = new AbortController();
     // FR-4.10 — bound the call; a hung request must not hold a record in PROCESSING.
@@ -79,12 +155,14 @@ export class GeminiExtractionProvider implements ExtractionProvider {
     let response;
     try {
       response = await this.client.models.generateContent({
-        model: env.GEMINI_MODEL,
+        model,
         contents: [
           {
             role: 'user',
             parts: [
-              { inlineData: { mimeType: 'application/pdf', data: req.pdf.toString('base64') } },
+              req.sheetText !== undefined
+                ? { text: `The purchase order below is a spreadsheet, given cell by cell.\n\n${req.sheetText}` }
+                : { inlineData: { mimeType: 'application/pdf', data: req.document.toString('base64') } },
               { text: req.prompt },
             ],
           },
@@ -95,6 +173,7 @@ export class GeminiExtractionProvider implements ExtractionProvider {
           responseSchema: RESPONSE_SCHEMA,
           // Extraction is a reading task, not a creative one.
           temperature: 0,
+          thinkingConfig: thinkingFor(model, req.sheetText !== undefined),
         },
       });
     } catch (err) {
@@ -136,7 +215,7 @@ export class GeminiExtractionProvider implements ExtractionProvider {
     return {
       result: validated.data,
       raw: parsed,
-      model: env.GEMINI_MODEL,
+      model,
       provider: this.name,
       latencyMs,
       inputTokens: response.usageMetadata?.promptTokenCount ?? null,

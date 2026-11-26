@@ -6,6 +6,7 @@ import { writeAudit } from '../services/audit.js';
 import { deliverPending } from '../services/notifications/deliver.js';
 import { notifyIntegration } from '../services/notifications/notify.js';
 import { runExtractionForRecord } from '../services/extraction/index.js';
+import { maxOverloadWaitMs } from '../services/extraction/gemini.js';
 import { runMailIntake } from '../services/mailIntake/intake.js';
 import { scanResultFolder, sweepSlaTimeouts } from '../services/sap/resultWatcher.js';
 import { checkOutboundWritable, submitToSap } from '../services/sap/outbound.js';
@@ -77,7 +78,7 @@ async function extractionTick() {
   // record has sat there longer than a full extraction with all its retries could
   // take, requeue it, so a restart resumes the work instead of stranding it.
   const stuckSince = new Date(
-    Date.now() - env.EXTRACTION_TIMEOUT_MS * env.EXTRACTION_MAX_ATTEMPTS - 60_000,
+    Date.now() - (env.EXTRACTION_TIMEOUT_MS + maxOverloadWaitMs()) * env.EXTRACTION_MAX_ATTEMPTS - 60_000,
   );
   const stuck = await prisma.pORecord.findMany({
     where: { status: 'PROCESSING', deletedAt: null, statusChangedAt: { lt: stuckSince } },

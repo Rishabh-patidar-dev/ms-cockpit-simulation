@@ -13,6 +13,8 @@ import { buildSalesOrderPdf, salesOrderFromRecord, salesOrderOptions, salesOrder
 import { lineParamsSchema, listQuerySchema } from './query.js';
 import { sapLinkFor } from '../sapApi/shareLink.js';
 import { loadDocumentContent } from '../../services/storage.js';
+import { isSpreadsheet, kindOfMimeType } from '../../services/documentKind.js';
+import { readSpreadsheet, SpreadsheetError } from '../../services/spreadsheet.js';
 
 export const recordsRouter = Router();
 recordsRouter.use(requireAuth);
@@ -146,26 +148,54 @@ recordsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-/** FR-1.9 / NFR-3.5 — the PDF is served through an authorised endpoint, never a public path. */
+/** The record's source document as stored, or a clear 404. */
+async function sourceDocumentOf(recordId: string) {
+  const record = await prisma.pORecord.findFirst({
+    where: { id: recordId, deletedAt: null },
+    include: { sourceDocument: true },
+  });
+  if (!record?.sourceDocument) throw notFound('No document on this record.');
+  const buffer = await loadDocumentContent(record.id, record.sourceDocument.storagePath);
+  if (!buffer) {
+    throw notFound(
+      'The document for this record is no longer available. It was uploaded before documents were stored durably, and the host has since cleared its disk.',
+    );
+  }
+  return { doc: record.sourceDocument, buffer };
+}
+
+/** FR-1.9 / NFR-3.5 — the document is served through an authorised endpoint, never a public path. */
 recordsRouter.get('/:id/document', async (req, res, next) => {
   try {
-    const record = await prisma.pORecord.findFirst({
-      where: { id: req.params.id!, deletedAt: null },
-      include: { sourceDocument: true },
-    });
-    if (!record?.sourceDocument) throw notFound('No document on this record.');
-    const buffer = await loadDocumentContent(record.id, record.sourceDocument.storagePath);
-    if (!buffer) {
-      throw notFound(
-        'The PDF for this record is no longer available. It was uploaded before documents were stored durably, and the host has since cleared its disk.',
-      );
-    }
-    res.setHeader('Content-Type', 'application/pdf');
+    const { doc, buffer } = await sourceDocumentOf(req.params.id!);
+    // A spreadsheet is offered as a download; only a PDF is shown inline.
+    const inline = kindOfMimeType(doc.mimeType) === 'pdf';
+    res.setHeader('Content-Type', doc.mimeType || 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${record.sourceDocument.originalFilename.replace(/"/g, '')}"`,
+      `${inline ? 'inline' : 'attachment'}; filename="${doc.originalFilename.replace(/"/g, '')}"`,
     );
     res.send(buffer);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * A spreadsheet PO as cells, for the review screen to show in place of a PDF. The same
+ * reading the extractor was given, so the cell a value cites (P7) is the cell shown.
+ */
+recordsRouter.get('/:id/document/sheets', async (req, res, next) => {
+  try {
+    const { doc, buffer } = await sourceDocumentOf(req.params.id!);
+    const kind = kindOfMimeType(doc.mimeType);
+    if (!isSpreadsheet(kind)) throw badRequest('This record\'s document is a PDF, not a spreadsheet.', 'NOT_A_SPREADSHEET');
+    try {
+      res.json(await readSpreadsheet(buffer, kind, doc.originalFilename));
+    } catch (err) {
+      if (err instanceof SpreadsheetError) throw badRequest(err.message, 'UNREADABLE_SPREADSHEET');
+      throw err;
+    }
   } catch (err) {
     next(err);
   }

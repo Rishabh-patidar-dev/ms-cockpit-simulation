@@ -18,7 +18,15 @@ import { loadDocumentContent } from '../storage.js';
 import { GeminiExtractionProvider } from './gemini.js';
 import { MockExtractionProvider } from './mock.js';
 import { notifyRecord } from '../notifications/notify.js';
-import { GENERIC_EXTRACTION_PROMPT, GENERIC_PROMPT_VERSION, buildVendorPrompt } from './prompts.js';
+import {
+  GENERIC_EXTRACTION_PROMPT,
+  GENERIC_PROMPT_VERSION,
+  SPREADSHEET_NOTES,
+  SPREADSHEET_PROMPT_VERSION,
+  buildVendorPrompt,
+} from './prompts.js';
+import { isSpreadsheet, kindOfMimeType } from '../documentKind.js';
+import { readSpreadsheet, workbookToText } from '../spreadsheet.js';
 import { ExtractionError, type ExtractionProvider } from './types.js';
 
 const log = childLogger('extraction');
@@ -99,42 +107,49 @@ export async function runExtractionForRecord(recordId: string): Promise<void> {
     actorName: 'extraction-worker',
   });
 
-  const pdf = await loadDocumentContent(recordId, record.sourceDocument.storagePath);
-  if (!pdf) {
+  const document = await loadDocumentContent(recordId, record.sourceDocument.storagePath);
+  if (!document) {
     // Neither the disk cache nor the database copy exists — an unretryable loss, so
     // land in EXTRACTION_FAILED rather than throwing and stranding the record in
     // PROCESSING, a status no worker ever picks back up.
-    const message =
-      'The uploaded PDF is no longer available (the host disk was cleared and no database copy exists). Upload it again.';
-    await prisma.pORecord.update({
-      where: { id: recordId },
-      data: { status: 'EXTRACTION_FAILED', statusChangedAt: new Date() },
-    });
-    await writeAudit({
-      recordId,
-      eventType: 'EXTRACTION_FAILED',
-      message,
-      actorName: 'extraction-worker',
-    });
-    await writeAudit({
-      recordId,
-      eventType: 'STATUS_CHANGED',
-      message: 'PROCESSING → EXTRACTION_FAILED',
-      actorName: 'extraction-worker',
-    });
-    await notifyRecord('EXTRACTION_FAILED', recordId, { detail: message });
     log.error({ recordId }, 'source document missing from disk and database');
+    await failWithoutRun(
+      recordId,
+      'The uploaded document is no longer available (the host disk was cleared and no database copy exists). Upload it again.',
+    );
     return;
   }
-  const profile = await matchVendorProfile(pdf, record.vendorHint);
-  const prompt = profile
+
+  // A spreadsheet goes to the model as its cells in text; a PDF goes as the file itself.
+  const kind = kindOfMimeType(record.sourceDocument.mimeType);
+  let sheetText: string | undefined;
+  if (isSpreadsheet(kind)) {
+    try {
+      sheetText = workbookToText(await readSpreadsheet(document, kind, record.sourceDocument.originalFilename));
+    } catch (err) {
+      log.warn({ recordId, err: (err as Error).message }, 'spreadsheet could not be read');
+      await failWithoutRun(recordId, `The spreadsheet could not be read: ${(err as Error).message}`);
+      return;
+    }
+    if (!sheetText.includes('=')) {
+      await failWithoutRun(recordId, 'The spreadsheet has no values in any visible sheet.');
+      return;
+    }
+  }
+
+  // Vendor markers are searched in the text a person would read: the cells of a spreadsheet,
+  // since an .xlsx is compressed and its bytes hold no readable text.
+  const profile = await matchVendorProfile(sheetText !== undefined ? Buffer.from(sheetText) : document, record.vendorHint);
+  const basePrompt = profile
     ? buildVendorPrompt(profile.name, profile.extractionPrompt)
     : GENERIC_EXTRACTION_PROMPT;
+  const prompt = sheetText !== undefined ? `${basePrompt}\n\n---\n${SPREADSHEET_NOTES}` : basePrompt;
   // A vendor prompt is the generic rules plus that vendor's notes (buildVendorPrompt), so
-  // it changes when either does; the stored version names both (FR-4.4).
-  const promptVersion = profile
-    ? `${profile.name}-v${profile.version}+${GENERIC_PROMPT_VERSION}`
-    : GENERIC_PROMPT_VERSION;
+  // it changes when either does; the stored version names both (FR-4.4), and the
+  // spreadsheet rules when they were added.
+  const promptVersion =
+    (profile ? `${profile.name}-v${profile.version}+${GENERIC_PROMPT_VERSION}` : GENERIC_PROMPT_VERSION) +
+    (sheetText !== undefined ? `+${SPREADSHEET_PROMPT_VERSION}` : '');
 
   const attempt = (await prisma.extractionRun.count({ where: { recordId } })) + 1;
   const run = await prisma.extractionRun.create({
@@ -162,7 +177,8 @@ export async function runExtractionForRecord(recordId: string): Promise<void> {
   for (let tries = 1; tries <= env.EXTRACTION_MAX_ATTEMPTS; tries++) {
     try {
       const response = await getProvider().extract({
-        pdf,
+        document,
+        sheetText,
         prompt,
         promptVersion,
         timeoutMs: env.EXTRACTION_TIMEOUT_MS,
@@ -305,4 +321,23 @@ async function persistExtraction(
     ];
     await tx.fieldExtraction.createMany({ data: provenance });
   });
+}
+
+/**
+ * Ends a run that cannot even start (the document is gone or unreadable): EXTRACTION_FAILED,
+ * with the reason on the audit trail and the uploader told. Retrying would fail the same way.
+ */
+async function failWithoutRun(recordId: string, message: string): Promise<void> {
+  await prisma.pORecord.update({
+    where: { id: recordId },
+    data: { status: 'EXTRACTION_FAILED', statusChangedAt: new Date() },
+  });
+  await writeAudit({ recordId, eventType: 'EXTRACTION_FAILED', message, actorName: 'extraction-worker' });
+  await writeAudit({
+    recordId,
+    eventType: 'STATUS_CHANGED',
+    message: 'PROCESSING → EXTRACTION_FAILED',
+    actorName: 'extraction-worker',
+  });
+  await notifyRecord('EXTRACTION_FAILED', recordId, { detail: message });
 }
