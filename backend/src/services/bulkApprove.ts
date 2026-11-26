@@ -3,7 +3,7 @@ import { prisma } from '../db/client.js';
 import { markAcknowledged } from '../domain/acknowledgement.js';
 import { assessForBulkApproval, type Assessment, type Hold } from '../domain/bulkApproval.js';
 import { deriveSentBack } from '../domain/sentBack.js';
-import { validateRecord } from '../domain/validation.js';
+import { validateRecordWithSheet } from './sheetCheck.js';
 import { AppError, forbidden } from '../lib/errors.js';
 import { childLogger } from '../lib/logger.js';
 import { writeAudit } from './audit.js';
@@ -29,7 +29,7 @@ export async function assessRecords(actor: Actor, ids: string[]): Promise<Record
   const records = await prisma.pORecord.findMany({
     where: { id: { in: ids }, deletedAt: null },
     include: {
-      sourceDocument: { select: { contentHash: true } },
+      sourceDocument: { select: { contentHash: true, storagePath: true, mimeType: true, originalFilename: true } },
       header: { include: { lineItems: { orderBy: { lineNumber: 'asc' } } } },
     },
   });
@@ -56,7 +56,7 @@ export async function assessRecords(actor: Actor, ids: string[]): Promise<Record
       records.slice(i, i + CHUNK).map(async (record) => {
         const myAcks = acks.filter((a) => a.recordId === record.id);
         const myAudit = audit.filter((a) => a.recordId === record.id);
-        const issues = markAcknowledged(await validateRecord(record.header), myAcks, myAudit);
+        const issues = markAcknowledged(await validateRecordWithSheet(record), myAcks, myAudit);
         const hash = record.sourceDocument?.contentHash;
         const [samePo, sameFile] = await Promise.all([
           findPoNumberDuplicates(record.id),

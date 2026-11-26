@@ -13,7 +13,8 @@ import {
   type HeaderField,
   type LineField,
 } from '../domain/types.js';
-import { blockingIssues, validateRecord, type ValidationIssue } from '../domain/validation.js';
+import { blockingIssues, type ValidationIssue } from '../domain/validation.js';
+import { validateRecordWithSheet } from './sheetCheck.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { correlationIdFor, newRecordId } from '../lib/ids.js';
 import { childLogger } from '../lib/logger.js';
@@ -432,7 +433,7 @@ export async function acknowledgeWarnings(
     throw conflict(`Warnings can only be accepted during review (this record is ${record.status}).`, 'NOT_EDITABLE');
   }
 
-  const issues = await validateRecord(record.header);
+  const issues = await validateRecordWithSheet(record);
   const { acks, audit } = await loadAcknowledgements(recordId);
   const current = markAcknowledged(issues, acks, audit);
 
@@ -488,7 +489,7 @@ export async function approveRecord(actor: Actor, recordId: string) {
   }
 
   // FR-6.8 — re-validate server-side at the moment of approval, never trust the client.
-  const issues = await validateRecord(record.header);
+  const issues = await validateRecordWithSheet(record);
   const blocking = blockingIssues(issues);
   if (blocking.length > 0) {
     throw badRequest(
@@ -790,7 +791,7 @@ export async function getRecordDetail(recordId: string) {
     }),
   ]);
 
-  const issues = await validateRecord(record.header);
+  const issues = await validateRecordWithSheet(record);
 
   /**
    * FR-7.2 / NFR-5.2 — the read, summarised so a reviewer can see at a glance how
