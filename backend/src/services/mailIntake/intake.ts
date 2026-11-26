@@ -7,6 +7,7 @@ import { childLogger } from '../../lib/logger.js';
 import { writeAudit } from '../audit.js';
 import { notify, notifyIntegration } from '../notifications/notify.js';
 import { createRecord, publishRecord, type Actor } from '../records.js';
+import { expandPoFile, splitNote } from '../poSplit.js';
 import { ACCEPTED_NAME, detectDocumentKind, looksLikeLegacyExcel, MIME_TYPES } from '../documentKind.js';
 import { mailConnection, NOT_CONNECTED, storedTokens } from './delegated.js';
 import { GraphMailSource, type MailMessage, type MailSource } from './source.js';
@@ -122,10 +123,17 @@ async function handleMessage(source: MailSource, deps: IntakeDeps, opts: IntakeO
   const tooLarge = attachments.filter((a) => a.content === null && ACCEPTED_NAME.test(a.name)).map((a) => a.name);
   // A PO is a PDF or a spreadsheet (.xlsx, .csv), recognised by its bytes. Logos, signatures
   // and Word files in the same mail are passed over.
-  const poFiles = attachments.flatMap((a) => {
+  const found = attachments.flatMap((a) => {
     const kind = a.content ? detectDocumentKind(a.content, a.name) : null;
     return a.content && kind ? [{ ...a, content: a.content, mimetype: MIME_TYPES[kind] }] : [];
   });
+  // A spreadsheet holding several POs (a PO-number column with several numbers) gives one file per PO.
+  const poFiles: (typeof found[number] & { note?: string })[] = [];
+  for (const f of found) {
+    const parts = await expandPoFile({ buffer: f.content, originalname: f.name, mimetype: f.mimetype });
+    if (parts.length === 1 && !parts[0]!.splitFrom) poFiles.push(f);
+    else for (const p of parts) poFiles.push({ ...f, name: p.originalname, content: p.buffer, mimetype: p.mimetype, note: p.splitFrom && splitNote(p.splitFrom) });
+  }
   const legacyExcel = attachments.filter((a) => a.content && looksLikeLegacyExcel(a.content)).map((a) => a.name);
 
   if (poFiles.length === 0) {
@@ -147,7 +155,7 @@ async function handleMessage(source: MailSource, deps: IntakeDeps, opts: IntakeO
   const drafts: string[] = [];
   for (const file of poFiles.slice(0, MAX_PDFS_PER_MAIL)) {
     if (done.has(sha256(file.content))) continue; // imported on a pass that did not finish
-    const rec = await deps.createRecord({ buffer: file.content, originalname: file.name, mimetype: file.mimetype }, notes, email.id);
+    const rec = await deps.createRecord({ buffer: file.content, originalname: file.name, mimetype: file.mimetype }, file.note ? `${notes}. ${file.note}` : notes, email.id);
     created.push({ ...rec, name: file.name });
     await deps.audit(rec.recordId, `${notes} (received ${message.receivedAt.toISOString()})`);
 

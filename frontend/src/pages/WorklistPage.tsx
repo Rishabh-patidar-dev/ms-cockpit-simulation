@@ -157,8 +157,18 @@ export function WorklistPage() {
 
   const upload = useMutation({
     mutationFn: (file: File) => api.upload(file),
-    onSuccess: (res) => {
+    onSuccess: (res, file) => {
       qc.invalidateQueries({ queryKey: ['records'] });
+      // A spreadsheet holding several POs gives a record per PO: list them all, each a draft to open.
+      if (res.more?.length) {
+        setReport([res, ...res.more].map((r) => ({
+          file: r.source ? `${file.name} › ${r.source}` : file.name,
+          kind: 'draft' as const,
+          recordId: r.record.id,
+          reason: `One of ${res.more!.length + 1} POs in this file. Open it to check and publish.`,
+        })));
+        return;
+      }
       navigate(`/records/${res.record.id}`);
     },
     onError: (err) => setUploadError(err instanceof ApiError ? err.message : 'Upload failed.'),

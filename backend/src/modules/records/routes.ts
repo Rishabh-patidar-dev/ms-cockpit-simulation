@@ -14,6 +14,7 @@ import { lineParamsSchema, listQuerySchema } from './query.js';
 import { sapLinkFor } from '../sapApi/shareLink.js';
 import { loadDocumentContent } from '../../services/storage.js';
 import { emailNote, isOutlookMessage, noPoReason, openEmail } from '../../services/outlookUpload.js';
+import { expandPoFile, splitNote, type PoFile } from '../../services/poSplit.js';
 import { isSpreadsheet, kindOfMimeType } from '../../services/documentKind.js';
 import { readSpreadsheet, SpreadsheetError } from '../../services/spreadsheet.js';
 
@@ -133,24 +134,33 @@ recordsRouter.post('/', upload.single('file'), async (req, res, next) => {
       vendorHint: typeof req.body?.vendorHint === 'string' ? req.body.vendorHint : undefined,
       notes: typeof req.body?.notes === 'string' ? req.body.notes : undefined,
     };
-    // An Outlook email saved as .msg: each PO attached to it becomes a record of its own. The
-    // first is answered as a single upload would be; the rest come in `more`, each with the
-    // attachment it was made from.
+    // An Outlook email saved as .msg: each PO attached to it becomes a record of its own. A
+    // spreadsheet holding several POs (one PO-number column, several numbers) becomes one record
+    // per PO. The first record is answered as a single upload would be; the rest come in `more`,
+    // each with the file it was made from.
+    let files: PoFile[];
+    let emailNotes: string | undefined;
     if (isOutlookMessage(req.file.buffer)) {
       const opened = openEmail(req.file.buffer);
       if (opened.pos.length === 0) throw badRequest(noPoReason(req.file.originalname, opened), 'NO_PO_IN_EMAIL');
-      const notes = [emailNote(opened.mail, req.file.originalname), meta.notes?.trim()].filter(Boolean).join('. ');
-      const made = [];
-      for (const po of opened.pos) {
-        const r = await records.createRecord(actorOf(req), { buffer: po.content, originalname: po.name, mimetype: po.mimetype }, { ...meta, notes });
-        made.push({ ...r, source: po.name });
-      }
-      const [first, ...more] = made;
-      res.status(201).json({ ...first, more });
+      emailNotes = emailNote(opened.mail, req.file.originalname);
+      files = opened.pos.map((po) => ({ buffer: po.content, originalname: po.name, mimetype: po.mimetype }));
+    } else {
+      files = [req.file];
+    }
+    files = (await Promise.all(files.map(expandPoFile))).flat();
+    if (files.length === 1 && !emailNotes && !files[0]!.splitFrom) {
+      res.status(201).json(await records.createRecord(actorOf(req), req.file, meta));
       return;
     }
-    const result = await records.createRecord(actorOf(req), req.file, meta);
-    res.status(201).json(result);
+    const made = [];
+    for (const f of files) {
+      const notes = [emailNotes, f.splitFrom && splitNote(f.splitFrom), meta.notes?.trim()].filter(Boolean).join('. ');
+      const r = await records.createRecord(actorOf(req), f, { ...meta, notes });
+      made.push({ ...r, source: f.originalname });
+    }
+    const [first, ...more] = made;
+    res.status(201).json({ ...first, more });
   } catch (err) {
     next(err);
   }
