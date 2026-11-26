@@ -65,6 +65,12 @@ export function isOverloaded(err: unknown): boolean {
   return /"code":\s*(503|429)|high demand|UNAVAILABLE|RESOURCE_EXHAUSTED|exceeded your current quota/i.test(msg);
 }
 
+/**
+ * The key's daily allowance for this model is spent (the free tier gives 20 requests a day).
+ * Waiting minutes cannot help; another model, which has its own allowance, might.
+ */
+export const isDailyQuotaSpent = (err: unknown) => /per day|PerDay/i.test(String((err as Error)?.message ?? ''));
+
 /** The model is not offered to this key (retired, or not yet enabled). */
 const isModelMissing = (err: unknown) =>
   (err as { status?: number })?.status === 404 || /"code":\s*404|NOT_FOUND/.test(String((err as Error)?.message ?? ''));
@@ -121,6 +127,19 @@ export class GeminiExtractionProvider implements ExtractionProvider {
         }
         lastErr = err;
         if (!isOverloaded(cause) || retry === env.EXTRACTION_OVERLOAD_RETRIES) throw err;
+        if (isDailyQuotaSpent(cause)) {
+          // This model is done for the day: carry on with the others, without waiting.
+          models.splice(models.indexOf(model), 1);
+          if (models.length === 0) {
+            throw new ExtractionError(
+              `The Gemini key has used its daily allowance for every model it is set to use (${[env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter(Boolean).join(', ')}). The free tier allows 20 requests a day per model; retry tomorrow, or enable billing on the key's Google AI Studio project.`,
+              false,
+              cause,
+            );
+          }
+          retry--;
+          continue;
+        }
         await sleep(overloadWaitMs(retry + 1));
       }
     }

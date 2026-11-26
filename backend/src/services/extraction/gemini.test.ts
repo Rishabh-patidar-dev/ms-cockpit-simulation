@@ -89,6 +89,28 @@ describe('overload', () => {
   });
 });
 
+describe('daily allowance spent', () => {
+  const spent = () => {
+    throw Object.assign(new Error('{"error":{"code":429,"message":"Generate content requests per day limit exceeded on Free Tier."}}'), { status: 429 });
+  };
+
+  it('moves straight to the fallback model, without waiting', async () => {
+    answers = [spent, ok];
+    const r = await new GeminiExtractionProvider('key').extract(pdfReq, noSleep);
+    expect(calls.map((c) => c.model)).toEqual(['gemini-3.6-flash', 'gemini-3.5-flash']);
+    expect(noSleep).not.toHaveBeenCalled();
+    expect(r.model).toBe('gemini-3.5-flash');
+  });
+
+  it('fails at once, saying why, when every model has spent its allowance', async () => {
+    answers = [spent, spent];
+    const err = await new GeminiExtractionProvider('key').extract(pdfReq, noSleep).catch((e) => e);
+    expect(err.message).toMatch(/daily allowance.*20 requests a day/);
+    expect(err.retryable).toBe(false);
+    expect(noSleep).not.toHaveBeenCalled();
+  });
+});
+
 it('recognises Gemini\'s overload and quota answers', () => {
   expect(isOverloaded({ status: 429 })).toBe(true);
   expect(isOverloaded(new Error('Gemini request failed: {"error":{"code":503,"status":"UNAVAILABLE"}}'))).toBe(true);
