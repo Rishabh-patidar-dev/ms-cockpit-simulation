@@ -111,7 +111,9 @@ const schema = z.object({
   CSV_DATE_FORMAT: z.enum(['iso', 'yyyymmdd', 'dd.mm.yyyy']).default('dd.mm.yyyy'),
   CSV_DECIMAL_SEPARATOR: z.enum(['.', ',']).default('.'),
   /** How each line of an outbound CSV ends: LF, or CR+LF as a file saved on a Windows PC has it. */
-  CSV_LINE_ENDING: z.enum(['lf', 'crlf']).default('lf'),
+  // crlf by default: the SAP team's files end lines with CR+LF, and their program splits on it
+  // (with LF alone it read the whole file as one line).
+  CSV_LINE_ENDING: z.enum(['lf', 'crlf']).default('crlf'),
   SAP_RESULT_POLL_MS: int(3000),
   SAP_SLA_TIMEOUT_MS: int(60 * 60 * 1000),
 
