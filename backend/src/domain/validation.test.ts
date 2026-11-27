@@ -8,6 +8,7 @@ import {
   normaliseDecimal,
   parseDate,
   parseDecimal,
+  resolveLineNumbers,
   validateRecord,
   type HeaderWithLines,
 } from './validation.js';
@@ -236,8 +237,9 @@ describe('validation (FR-6)', () => {
       header({
         poDate: '03/04/2026',
         requestedDeliveryDate: '2026-10-01',
-        lineItems: [line({ quantity: '1,000', unitPrice: '5.00', lineNetValue: '5.00' })],
-        poTotalValue: '5.00',
+        // No line value, so the line's arithmetic cannot say which reading is meant.
+        lineItems: [line({ quantity: '1,000', unitPrice: '5.00', lineNetValue: null })],
+        poTotalValue: null,
       }),
     );
     expect(codes(issues)).toContain('AMBIGUOUS_DATE');
@@ -277,5 +279,28 @@ describe('validation (FR-6)', () => {
     expect(codes(issues)).toContain('UNKNOWN_CUSTOMER');
     expect(codes(issues)).toContain('UNKNOWN_MATERIAL');
     expect(blockingIssues(issues)).toHaveLength(2);
+  });
+});
+
+describe('resolveLineNumbers: a "1,200" settled by the line arithmetic', () => {
+  it('takes the only reading that makes quantity × price = net value', () => {
+    expect(resolveLineNumbers({ quantity: '1,200', unitPrice: '512.40', lineNetValue: '614880.00' })).toEqual({
+      quantity: '1200', unitPrice: '512.40', lineNetValue: '614880.00', settled: ['quantity'],
+    });
+    expect(resolveLineNumbers({ quantity: '1,500', unitPrice: '2', lineNetValue: '3' })).toMatchObject({ quantity: '1.500', settled: ['quantity'] });
+  });
+
+  it('settles nothing when the line cannot tell (a value missing, or both readings fit)', () => {
+    expect(resolveLineNumbers({ quantity: '1,200', unitPrice: '512.40', lineNetValue: null })).toMatchObject({ quantity: '1.200', settled: [] });
+    expect(resolveLineNumbers({ quantity: '1,000', unitPrice: '0', lineNetValue: '0' })).toMatchObject({ quantity: '1.000', settled: [] });
+    expect(resolveLineNumbers({ quantity: '7', unitPrice: '2.50', lineNetValue: '17.50' })).toEqual({ quantity: '7', unitPrice: '2.50', lineNetValue: '17.50', settled: [] });
+  });
+
+  it('no longer asks the reviewer about, or flags the arithmetic of, a line that settles itself', async () => {
+    const issues = await validateRecord(
+      header({ lineItems: [line({ quantity: '2,600', unitPrice: '0.18', lineNetValue: '468.00' })], poTotalValue: '468.00' }),
+    );
+    expect(codes(issues)).not.toContain('AMBIGUOUS_NUMBER');
+    expect(codes(issues)).not.toContain('LINE_MATH_MISMATCH');
   });
 });

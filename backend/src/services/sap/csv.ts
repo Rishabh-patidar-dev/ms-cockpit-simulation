@@ -2,6 +2,7 @@ import { env } from '../../config/env.js';
 import {
   formatDate,
   normaliseDecimal,
+  resolveLineNumbers,
   parseDate,
   type DateFormat,
   type HeaderWithLines,
@@ -38,6 +39,29 @@ function asDecimal(raw: string | null | undefined, what: string, fmt: CsvFormat)
   const n = normaliseDecimal(raw);
   if (n === null) throw new OutboundFormatError(`${what} "${raw}" is not a number, so it cannot be written to the SAP file.`);
   return fmt.decimalSeparator === ',' ? n.replace('.', ',') : n;
+}
+
+/**
+ * A line's quantity, unit price and net value as written to SAP: an ambiguous "1,200" is settled by
+ * the line's own arithmetic where it can be (resolveLineNumbers), so a PO saying 1,200 × 512.40 =
+ * 614,880.00 sends 1200, not 1.2. The review screen's checks read the same way.
+ */
+function lineDecimals(
+  l: { lineNumber: number; quantity: string | null; unitPrice: string | null; lineNetValue: string | null },
+  fmt: CsvFormat,
+) {
+  const r = resolveLineNumbers(l);
+  const one = (raw: string | null, settled: string | null, what: string) => {
+    if (raw == null || raw.trim() === '') return '';
+    const n = settled ?? normaliseDecimal(raw);
+    if (n === null) throw new OutboundFormatError(`${what} "${raw}" is not a number, so it cannot be written to the SAP file.`);
+    return fmt.decimalSeparator === ',' ? n.replace('.', ',') : n;
+  };
+  return {
+    quantity: one(l.quantity, r.quantity, `Line ${l.lineNumber} quantity`),
+    unitPrice: one(l.unitPrice, r.unitPrice, `Line ${l.lineNumber} unit price`),
+    lineNetValue: one(l.lineNetValue, r.lineNetValue, `Line ${l.lineNumber} net value`),
+  };
 }
 
 /** Their file writes a whole amount as 50000, not 50000.00; a real fraction (0.42, 12,50) is untouched. */
@@ -178,10 +202,10 @@ export function buildOutboundPayload(
       l.materialCode,
       l.customerMaterialNumber,
       l.description,
-      asDecimal(l.quantity, `Line ${l.lineNumber} quantity`, fmt),
+      lineDecimals(l, fmt).quantity,
       l.uom,
-      asDecimal(l.unitPrice, `Line ${l.lineNumber} unit price`, fmt),
-      asDecimal(l.lineNetValue, `Line ${l.lineNumber} net value`, fmt),
+      lineDecimals(l, fmt).unitPrice,
+      lineDecimals(l, fmt).lineNetValue,
       asDate(l.deliveryDate, `Line ${l.lineNumber} delivery date`, fmt),
       l.plant,
     ]),
@@ -209,9 +233,9 @@ export function buildOutboundPayload(
         poDate,
         asDate(l.deliveryDate?.trim() ? l.deliveryDate : header.requestedDeliveryDate, `Line ${l.lineNumber} delivery date`, fmt),
         header.currency?.trim().toUpperCase(),
-        wholeAsInteger(asDecimal(l.quantity, `Line ${l.lineNumber} quantity`, fmt)),
-        wholeAsInteger(asDecimal(l.unitPrice, `Line ${l.lineNumber} unit price`, fmt)),
-        wholeAsInteger(asDecimal(l.lineNetValue, `Line ${l.lineNumber} net value`, fmt)),
+        wholeAsInteger(lineDecimals(l, fmt).quantity),
+        wholeAsInteger(lineDecimals(l, fmt).unitPrice),
+        wholeAsInteger(lineDecimals(l, fmt).lineNetValue),
         l.description,
         l.uom,
         env.SAP_FLAT_STATUS,
@@ -295,10 +319,10 @@ export function buildOutboundJson(
       materialCode: l.materialCode,
       customerMaterialNumber: l.customerMaterialNumber,
       description: l.description,
-      quantity: asDecimal(l.quantity, `Line ${l.lineNumber} quantity`, fmt),
+      quantity: lineDecimals(l, fmt).quantity,
       uom: l.uom,
-      unitPrice: asDecimal(l.unitPrice, `Line ${l.lineNumber} unit price`, fmt),
-      lineNetValue: asDecimal(l.lineNetValue, `Line ${l.lineNumber} net value`, fmt),
+      unitPrice: lineDecimals(l, fmt).unitPrice,
+      lineNetValue: lineDecimals(l, fmt).lineNetValue,
       deliveryDate: asDate(l.deliveryDate, `Line ${l.lineNumber} delivery date`, fmt),
       plant: l.plant,
     })),

@@ -81,6 +81,46 @@ export function isAmbiguousDecimal(raw: string | null | undefined): boolean {
   return /^-?[1-9]\d{0,2}[.,]\d{3}$/.test(raw.replace(/[^\d,.\-]/g, ''));
 }
 
+type LineNumberField = 'quantity' | 'unitPrice' | 'lineNetValue';
+
+export interface ResolvedLineNumbers {
+  /** Each value as a plain decimal ("2600", "512.40"), or null when blank or not a number. */
+  quantity: string | null;
+  unitPrice: string | null;
+  lineNetValue: string | null;
+  /** The ambiguous values the line's own arithmetic settled; no need to ask the reviewer about them. */
+  settled: LineNumberField[];
+}
+
+/**
+ * A line's quantity, unit price and net value, with an ambiguous "1,200" (a thousands mark, or a
+ * three-place decimal) settled by the line's own arithmetic where it can be: of the readings of the
+ * ambiguous values, if exactly one makes quantity × unit price = net value, that one is taken. A PO
+ * that says 1,200 × 512.40 = 614,880.00 means 1200, never 1.2. Otherwise each value is read as
+ * normaliseDecimal reads it, and the reviewer is still asked (AMBIGUOUS_NUMBER).
+ */
+export function resolveLineNumbers(line: Partial<Record<LineNumberField, string | null>>): ResolvedLineNumbers {
+  const fields: LineNumberField[] = ['quantity', 'unitPrice', 'lineNetValue'];
+  const plain = Object.fromEntries(fields.map((f) => [f, normaliseDecimal(line[f])])) as Record<LineNumberField, string | null>;
+  const ambiguous = fields.filter((f) => isAmbiguousDecimal(line[f]) && plain[f] !== null);
+  if (ambiguous.length === 0 || fields.some((f) => plain[f] === null)) return { ...plain, settled: [] };
+
+  const choices = (f: LineNumberField) =>
+    ambiguous.includes(f) ? [plain[f]!, line[f]!.replace(/[^\d\-]/g, '')] : [plain[f]!];
+  const fits: Record<LineNumberField, string>[] = [];
+  for (const q of choices('quantity'))
+    for (const p of choices('unitPrice'))
+      for (const n of choices('lineNetValue')) {
+        const expected = Number(q) * Number(p);
+        if (Math.abs(expected - Number(n)) <= Math.max(TOTAL_TOLERANCE, Math.abs(expected) * 0.005)) {
+          fits.push({ quantity: q, unitPrice: p, lineNetValue: n });
+        }
+      }
+  const distinct = new Set(fits.map((f) => `${f.quantity}|${f.unitPrice}|${f.lineNetValue}`));
+  if (distinct.size !== 1) return { ...plain, settled: [] };
+  return { ...fits[0]!, settled: ambiguous };
+}
+
 const MONTH_NAMES = [
   'january', 'february', 'march', 'april', 'may', 'june',
   'july', 'august', 'september', 'october', 'november', 'december',
@@ -359,8 +399,9 @@ export async function validateRecord(
         });
       }
     }
+    const resolved = resolveLineNumbers(line);
     for (const field of ['quantity', 'unitPrice', 'lineNetValue'] as const) {
-      if (isAmbiguousDecimal(line[field]) && parseDecimal(line[field]) !== null) {
+      if (isAmbiguousDecimal(line[field]) && parseDecimal(line[field]) !== null && !resolved.settled.includes(field)) {
         issues.push(
           ambiguousNumber(
             lineFieldPath(line.lineNumber, field),
@@ -388,7 +429,7 @@ export async function validateRecord(
       }
     }
 
-    const price = parseDecimal(line.unitPrice);
+    const price = resolved.unitPrice === null ? parseDecimal(line.unitPrice) : Number(resolved.unitPrice);
     if (price !== null && price < 0) {
       issues.push({
         code: 'PRICE_NEGATIVE',
@@ -399,12 +440,13 @@ export async function validateRecord(
     }
 
     // FR-6.6 — line arithmetic cross-check
-    const net = parseDecimal(line.lineNetValue);
+    const net = resolved.lineNetValue === null ? parseDecimal(line.lineNetValue) : Number(resolved.lineNetValue);
     if (net === null) allLineValuesKnown = false;
     else lineSum += net;
 
-    if (qty !== null && price !== null && net !== null) {
-      const expected = qty * price;
+    const qtyForMath = resolved.quantity === null ? qty : Number(resolved.quantity);
+    if (qtyForMath !== null && price !== null && net !== null) {
+      const expected = qtyForMath * price;
       if (Math.abs(expected - net) > Math.max(TOTAL_TOLERANCE, expected * 0.005)) {
         issues.push({
           code: 'LINE_MATH_MISMATCH',

@@ -269,3 +269,20 @@ describe('line endings (CSV_LINE_ENDING)', () => {
     );
   });
 });
+
+describe('an ambiguous "2,600" in the SAP file', () => {
+  it("is written as the line's own arithmetic proves it: 2,600 × 0.18 = 468.00 is 2600, not 2.6", () => {
+    const h = header({
+      poTotalValue: '468.00',
+      lineItems: [{ ...header().lineItems[1]!, quantity: '2,600', unitPrice: '0.18', lineNetValue: '468.00' }],
+    });
+    const rows = buildOutboundPayload('PO-ABC', 1, h).files[0]!.content.split(/\r?\n/);
+    expect(rows.find((r) => r.startsWith('L,'))).toContain(',2600,EA,0.18,468.00,');
+  });
+
+  it('keeps the plain reading when the line cannot settle it', () => {
+    const h = header({ poTotalValue: null, lineItems: [{ ...header().lineItems[1]!, quantity: '2,600', unitPrice: '0.18', lineNetValue: null }] });
+    const rows = buildOutboundPayload('PO-ABC', 1, h).files[0]!.content.split(/\r?\n/);
+    expect(rows.find((r) => r.startsWith('L,'))).toContain(',2.600,EA,0.18,,');
+  });
+});

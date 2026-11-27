@@ -1,5 +1,5 @@
 import type { POHeader, POLineItem } from '@prisma/client';
-import { parseDecimal } from '../domain/validation.js';
+import { parseDecimal, resolveLineNumbers } from '../domain/validation.js';
 import { PAGE, TextPdf, textWidth } from '../lib/textPdf.js';
 
 /**
@@ -164,7 +164,11 @@ export function salesOrderOptions(env: {
 
 /** The total is the sum of the lines when every one reads as a number; otherwise the PO's own total. */
 function orderTotal(lineItems: { lineNetValue: string | null }[], poTotalValue: string | null | undefined, priceFactor: number): number | null {
-  const values = lineItems.map((l) => parseDecimal(l.lineNetValue));
+  // An ambiguous "1,500" is read as the SAP file writes it (resolveLineNumbers).
+  const values = lineItems.map((l) => {
+    const settled = resolveLineNumbers(l).lineNetValue;
+    return settled !== null ? Number(settled) : parseDecimal(l.lineNetValue);
+  });
   const allNumbers = values.length > 0 && values.every((v) => v != null);
   const base = allNumbers ? values.reduce((a, b) => a! + b!, 0)! : parseDecimal(poTotalValue);
   return base == null ? null : Math.round(base * priceFactor * 100) / 100;
@@ -198,15 +202,16 @@ export function salesOrderFromRecord(
   const discountPct = Math.round((1 - priceFactor) * 1000) / 10;
   const lines: SalesOrderLine[] = [...(h?.lineItems ?? [])]
     .sort((a, b) => a.lineNumber - b.lineNumber)
-    .map((l) => ({
+    .map((l) => ({ l, n: resolveLineNumbers(l) }))
+    .map(({ l, n }) => ({
       item: String(l.lineNumber),
       material: l.materialCode ?? l.customerMaterialNumber ?? '',
       description: l.description ?? '',
       qty: (l.quantity ?? '').trim(),
       uom: l.uom ?? '',
-      listPrice: money(l.unitPrice),
+      listPrice: money(n.unitPrice ?? l.unitPrice),
       discount: `${discountPct.toFixed(2)} (%)`,
-      amount: scaled(l.lineNetValue, priceFactor),
+      amount: scaled(n.lineNetValue ?? l.lineNetValue, priceFactor),
       plant: l.plant ?? '',
       delivery: l.deliveryDate ?? '',
     }));
