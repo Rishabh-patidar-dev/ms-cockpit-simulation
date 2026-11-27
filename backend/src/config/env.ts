@@ -86,14 +86,16 @@ const schema = z.object({
   // FR-9 / FR-10 integration — IC-10: paths are configuration, never hard-coded
   INTEGRATION_ROOT: z.string().default('./integration'),
   COMPLETENESS_CONVENTION: z.enum(['rename', 'done_marker']).default('done_marker'),
-  CSV_LAYOUT: z.enum(['single_file', 'header_lines_pair', 'sap_flat']).default('single_file'),
+  // sap_flat by default: the 18-column file the SAP team's program reads (their ZEE_API_LOG_TEST table).
+  CSV_LAYOUT: z.enum(['single_file', 'header_lines_pair', 'sap_flat']).default('sap_flat'),
   /**
    * sap_flat is the SAP team's own file: one row per item, 18 named columns, always with a header
    * row. These fill the columns a customer's PO does not carry. The defaults are the values in
    * their sample file, to be confirmed by them.
    */
   SAP_FLAT_COMPANY_CODE: z.string().default('1710'),
-  SAP_FLAT_DOC_TYPE: z.string().default('NB'),
+  /** TA: SAP's standard sales order type, as in the SAP team's sample. */
+  SAP_FLAT_DOC_TYPE: z.string().default('TA'),
   SAP_FLAT_STORAGE_LOCATION: z.string().default('BB01'),
   SAP_FLAT_CREATED_BY: z.string().default('COCKPIT'),
   SAP_FLAT_STATUS: z.string().default('OPEN'),
@@ -105,7 +107,8 @@ const schema = z.object({
    * iso 2026-09-17 · yyyymmdd 20260917 (SAP DATS) · dd.mm.yyyy 17.09.2026.
    * Both are provisional until OQ-03 is closed, like the rest of the layout.
    */
-  CSV_DATE_FORMAT: z.enum(['iso', 'yyyymmdd', 'dd.mm.yyyy']).default('iso'),
+  /** dd.mm.yyyy by default: the SAP team's date fields are CHAR10 and their sample writes 25.09.2026. */
+  CSV_DATE_FORMAT: z.enum(['iso', 'yyyymmdd', 'dd.mm.yyyy']).default('dd.mm.yyyy'),
   CSV_DECIMAL_SEPARATOR: z.enum(['.', ',']).default('.'),
   /** How each line of an outbound CSV ends: LF, or CR+LF as a file saved on a Windows PC has it. */
   CSV_LINE_ENDING: z.enum(['lf', 'crlf']).default('lf'),

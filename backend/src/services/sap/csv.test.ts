@@ -153,8 +153,8 @@ describe('the SAP team\'s own layout (CSV_LAYOUT=sap_flat)', () => {
     expect(files[0]!.content).toBe(
       [
         NAMES,
-        'PO-1,1710,NB,01.09.2026,COCKPIT,1,MAT-1,,BB01,01.09.2026,01.10.2026,EUR,1,25,25,First,EA,OPEN',
-        'PO-1,1710,NB,01.09.2026,COCKPIT,2,MAT-2,,BB01,01.09.2026,01.10.2026,EUR,1,25,25,Second,EA,OPEN',
+        'PO-1,1710,TA,01.09.2026,COCKPIT,1,MAT-1,,BB01,01.09.2026,01.10.2026,EUR,1,25,25,First,EA,OPEN',
+        'PO-1,1710,TA,01.09.2026,COCKPIT,2,MAT-2,,BB01,01.09.2026,01.10.2026,EUR,1,25,25,Second,EA,OPEN',
         '',
       ].join('\n'),
     );
@@ -192,7 +192,7 @@ describe('the SAP team\'s own layout (CSV_LAYOUT=sap_flat)', () => {
   it('fills the columns a customer PO does not carry from settings', async () => {
     Object.assign(process.env, { SAP_FLAT_COMPANY_CODE: '1000', SAP_FLAT_STORAGE_LOCATION: 'WH01' });
     const row = (await build()).files[0]!.content.split('\n')[1]!;
-    expect(row.startsWith('PO-1,1000,NB,')).toBe(true);
+    expect(row.startsWith('PO-1,1000,TA,')).toBe(true);
     expect(row).toContain(',WH01,');
   });
 
@@ -260,7 +260,7 @@ describe('line endings (CSV_LINE_ENDING)', () => {
       ],
     });
     const { files } = await build(
-      { CSV_LAYOUT: 'sap_flat', CSV_DATE_FORMAT: 'dd.mm.yyyy', SAP_FLAT_CREATED_BY: 'SAP', CSV_LINE_ENDING: 'crlf' },
+      { CSV_LAYOUT: 'sap_flat', CSV_DATE_FORMAT: 'dd.mm.yyyy', SAP_FLAT_CREATED_BY: 'SAP', SAP_FLAT_DOC_TYPE: 'NB', CSV_LINE_ENDING: 'crlf' },
       po,
     );
     expect(files[0]!.content).toBe(
