@@ -27,6 +27,17 @@ export interface SapLink {
   simulatorRunning: boolean;
 }
 
+/**
+ * An order SAP has not answered: sent to it, or past the SAP_SLA_TIMEOUT_MS wait with no answer
+ * (FAILED, NO_RESPONSE_FROM_SAP). The timeout alerts Operations; it does not take the order away
+ * from SAP, whose late answer is still accepted, so the order stays fetchable until SAP answers.
+ */
+export const isWaitingForSap = (status: POStatus, failureCode: string | null | undefined) =>
+  status === 'SENT_TO_SAP' || (status === 'FAILED' && failureCode === 'NO_RESPONSE_FROM_SAP');
+
+/** The same, as a database filter. */
+export const WAITING_FOR_SAP = [{ status: 'SENT_TO_SAP' as const }, { status: 'FAILED' as const, failureCode: 'NO_RESPONSE_FROM_SAP' }];
+
 /** The server SAP should call: the explicit setting, else Render's own address, else the app's address. */
 export function sapBaseUrl(cfg: SapLinkConfig): string {
   const base = cfg.sapApiPublicUrl || cfg.renderExternalUrl || cfg.publicBaseUrl;
@@ -38,11 +49,17 @@ export function sapBaseUrl(cfg: SapLinkConfig): string {
  * calls, GET /orders/{correlationId}/csv. It is only answered while the order waits for SAP, so the
  * reason says what to do when it is not.
  */
-export function sapLinkFor(status: POStatus, correlationId: string, soNumber: string | null, cfg: SapLinkConfig): SapLink {
+export function sapLinkFor(
+  status: POStatus,
+  correlationId: string,
+  soNumber: string | null,
+  cfg: SapLinkConfig,
+  failureCode: string | null = null,
+): SapLink {
   const api = `${sapBaseUrl(cfg)}${SAP_API_PATH}`;
   const reason = !cfg.apiKey
     ? 'The SAP API is switched off. Set SAP_API_KEY on the server.'
-    : status === 'SENT_TO_SAP'
+    : isWaitingForSap(status, failureCode)
       ? null
       : status === 'SO_CREATED'
         ? `SAP has already answered${soNumber ? ` with Sales Order ${soNumber}` : ''}, so the link no longer returns this order.`

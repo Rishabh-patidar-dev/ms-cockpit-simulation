@@ -11,7 +11,7 @@ import * as bulkApprove from '../../services/bulkApprove.js';
 import * as records from '../../services/records.js';
 import { buildSalesOrderPdf, salesOrderFromRecord, salesOrderOptions, salesOrderValue } from '../../services/salesOrderDocument.js';
 import { lineParamsSchema, listQuerySchema } from './query.js';
-import { sapLinkFor } from '../sapApi/shareLink.js';
+import { sapLinkFor, WAITING_FOR_SAP } from '../sapApi/shareLink.js';
 import { loadDocumentContent } from '../../services/storage.js';
 import { emailNote, isOutlookMessage, noPoReason, openEmail } from '../../services/outlookUpload.js';
 import { expandPoFile, splitNote, type PoFile } from '../../services/poSplit.js';
@@ -38,6 +38,16 @@ const actorOf = (req: Parameters<Parameters<Router['get']>[1]>[0]) => ({
  * so a route that answered with the bare service payload took the whole page
  * down with it. Built here once rather than spread across a dozen handlers.
  */
+/** Where the SAP links point, and the key their download codes are made with (never sent). */
+const sapLinkConfig = () => ({
+  sapApiPublicUrl: env.SAP_API_PUBLIC_URL,
+  renderExternalUrl: env.RENDER_EXTERNAL_URL,
+  publicBaseUrl: env.PUBLIC_BASE_URL,
+  apiKey: env.SAP_API_KEY,
+  apiUser: env.SAP_API_USER,
+  simulatorRunning: env.RUN_SAP_SIMULATOR,
+});
+
 async function detailResponse(id: string) {
   const detail = await records.getRecordDetail(id);
   const contentHash = detail.record.sourceDocument?.contentHash;
@@ -57,14 +67,7 @@ async function detailResponse(id: string) {
     allowedTransitions: TRANSITIONS[detail.record.status],
     statusLabel: STATUS_LABELS[detail.record.status],
     // The link to share with SAP for this order; never the key.
-    sapLink: sapLinkFor(detail.record.status, detail.record.correlationId, detail.record.soNumber, {
-      sapApiPublicUrl: env.SAP_API_PUBLIC_URL,
-      renderExternalUrl: env.RENDER_EXTERNAL_URL,
-      publicBaseUrl: env.PUBLIC_BASE_URL,
-      apiKey: env.SAP_API_KEY,
-      apiUser: env.SAP_API_USER,
-      simulatorRunning: env.RUN_SAP_SIMULATOR,
-    }),
+    sapLink: sapLinkFor(detail.record.status, detail.record.correlationId, detail.record.soNumber, sapLinkConfig(), detail.record.failureCode),
   };
 }
 
@@ -98,6 +101,52 @@ recordsRouter.get('/', async (req, res, next) => {
 recordsRouter.get('/counts', async (_req, res, next) => {
   try {
     res.json(await records.statusCounts());
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Every order SAP can fetch right now, each with the link to share (tap to download, this order
+ * only, no login): the list to hand a colleague testing SAP's side. Oldest first, as SAP's job
+ * takes them. The key itself is never in the answer.
+ */
+recordsRouter.get('/sap-links', async (_req, res, next) => {
+  try {
+    const cfg = sapLinkConfig();
+    const waiting = await prisma.pORecord.findMany({
+      where: { OR: WAITING_FOR_SAP, deletedAt: null },
+      orderBy: { sentToSapAt: 'asc' },
+      take: 500,
+      select: {
+        id: true,
+        correlationId: true,
+        status: true,
+        failureCode: true,
+        soNumber: true,
+        sentToSapAt: true,
+        header: { select: { poNumber: true, customerName: true, _count: { select: { lineItems: true } } } },
+      },
+    });
+    res.json({
+      apiEnabled: Boolean(cfg.apiKey),
+      simulatorRunning: cfg.simulatorRunning,
+      links: waiting.map((r) => {
+        const link = sapLinkFor(r.status, r.correlationId, r.soNumber, cfg, r.failureCode);
+        return {
+          recordId: r.id,
+          correlationId: r.correlationId,
+          poNumber: r.header?.poNumber ?? null,
+          customerName: r.header?.customerName ?? null,
+          lines: r.header?._count.lineItems ?? 0,
+          sentToSapAt: r.sentToSapAt,
+          // Past the SAP_SLA_TIMEOUT_MS wait with no answer; still fetchable until SAP answers.
+          overdue: r.status === 'FAILED',
+          downloadUrl: link.downloadUrl,
+          orderCsvUrl: link.orderCsvUrl,
+        };
+      }),
+    });
   } catch (err) {
     next(err);
   }

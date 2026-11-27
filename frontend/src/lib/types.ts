@@ -379,3 +379,23 @@ export interface WorkbookData {
     truncated: boolean;
   }[];
 }
+
+/** One order waiting for SAP and the link to share for it. */
+export interface WaitingOrderLink {
+  recordId: string;
+  correlationId: string;
+  poNumber: string | null;
+  customerName: string | null;
+  lines: number;
+  sentToSapAt: string | null;
+  /** Past the SAP answer wait; the link still works until SAP answers. */
+  overdue: boolean;
+  downloadUrl: string | null;
+  orderCsvUrl: string;
+}
+
+export interface SapLinksResponse {
+  apiEnabled: boolean;
+  simulatorRunning: boolean;
+  links: WaitingOrderLink[];
+}

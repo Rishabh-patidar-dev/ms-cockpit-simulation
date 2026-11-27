@@ -1,5 +1,6 @@
 import type { UploadResult } from './batchUpload';
 import type {
+  SapLinksResponse,
   AuthUser,
   BulkOutcome,
   ChannelStatus,
@@ -102,6 +103,9 @@ export const api = {
   },
 
   counts: () => request<Record<string, number>>('/records/counts'),
+
+  /** Every order SAP can fetch now, each with its tap-to-download link (no login, that order only). */
+  sapLinks: () => request<SapLinksResponse>('/records/sap-links'),
 
   dashboard: (days: number) => request<DashboardData>(`/dashboard?days=${days}`),
 

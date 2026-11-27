@@ -44,6 +44,11 @@ describe('sapLinkFor', () => {
     expect(link.reason).toMatch(reason);
   });
 
+  it('stays ready for an order past the wait that SAP has not answered, but not for one SAP rejected', () => {
+    expect(sapLinkFor('FAILED', 'PO-1', null, cfg(), 'NO_RESPONSE_FROM_SAP')).toMatchObject({ ready: true, reason: null });
+    expect(sapLinkFor('FAILED', 'PO-1', null, cfg(), 'SAP_REJECTED').ready).toBe(false);
+  });
+
   it('is not ready when the SAP API is off, whatever the status', () => {
     const link = sapLinkFor('SENT_TO_SAP', 'PO-1', null, cfg({ apiKey: '' }));
     expect(link.ready).toBe(false);

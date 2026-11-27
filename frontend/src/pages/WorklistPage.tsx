@@ -7,6 +7,7 @@ import { MAX_BATCH, summarise, uploadAndPublishAll, type BatchOutcome } from '..
 import { holdSummary, readyIds, summariseBulk } from '../lib/bulkApprove';
 import { parseDecimal } from '../lib/decimal';
 import { ago } from '../lib/format';
+import { SapLinksPanel } from '../components/SapLinksPanel';
 import { ACCEPT_ATTRIBUTE, isOutlookEmail, refusalFor } from '../lib/fileKinds';
 import { readWorklist, rememberWorklist, writeWorklist, type SortKey, type WorklistState } from '../lib/worklistState';
 import { StatusBadge } from '../components/StatusBadge';
@@ -59,6 +60,7 @@ export function WorklistPage() {
   // A multi-file drop: progress while it runs, then what happened to each file.
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
   const [report, setReport] = useState<BatchOutcome[] | null>(null);
+  const [showSapLinks, setShowSapLinks] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [over, setOver] = useState(false);
@@ -439,6 +441,14 @@ export function WorklistPage() {
               )}
               <button
                 className="quiet sm"
+                onClick={() => setShowSapLinks((v) => !v)}
+                aria-pressed={showSapLinks}
+                title="Every order waiting for SAP, with the link to share for each"
+              >
+                SAP links
+              </button>
+              <button
+                className="quiet sm"
                 onClick={exportCsv}
                 disabled={!rows.length || exporting}
                 title="Download every record in the current view as CSV"
@@ -454,6 +464,7 @@ export function WorklistPage() {
 
         {uploadError && <div className="err" role="alert">{uploadError}</div>}
         {report && <BatchReport outcomes={report} onDismiss={() => setReport(null)} />}
+        {showSapLinks && <SapLinksPanel onClose={() => setShowSapLinks(false)} />}
         {exportError && <div className="err" role="alert">{exportError}</div>}
         {mailNote && <div className="err" role="alert">{mailNote}</div>}
         {connectNote && (

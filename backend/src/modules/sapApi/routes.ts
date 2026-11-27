@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { prisma } from '../../db/client.js';
 import { AppError, badRequest, conflict, notFound } from '../../lib/errors.js';
 import { sapApiAuth } from '../../middleware/sapApiAuth.js';
+import { isWaitingForSap, WAITING_FOR_SAP } from './shareLink.js';
 import { requireJsonBody } from '../../middleware/sapBody.js';
 import {
   OutboundFormatError,
@@ -45,7 +46,8 @@ sapApiRouter.get('/orders', async (req, res, next) => {
   try {
     const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(req.query);
     const records = await prisma.pORecord.findMany({
-      where: { status: 'SENT_TO_SAP', deletedAt: null },
+      // Sent, and also past the wait with no answer: SAP's late answer is still taken.
+      where: { OR: WAITING_FOR_SAP, deletedAt: null },
       orderBy: { sentToSapAt: 'asc' },
       take: limit,
       include: recordWithLines,
@@ -77,7 +79,7 @@ async function findWaitingOrder(correlationId: string) {
     include: recordWithLines,
   });
   if (!record) throw notFound('No order has that correlation ID.');
-  if (record.status !== 'SENT_TO_SAP' || !record.header) {
+  if (!isWaitingForSap(record.status, record.failureCode) || !record.header) {
     throw conflict(`That order is ${record.status}, not waiting for SAP.`, 'NOT_WAITING_FOR_SAP', { status: record.status });
   }
   return { ...record, header: record.header };
@@ -290,7 +292,7 @@ sapApiRouter.post(
  * A PO number of exactly ten characters that matches nothing is tried as the start of a longer one, because a
  * CHAR10 field on the SAP side cuts longer numbers (LEM-26-04417 arrives as LEM-26-044).
  */
-const WAITING = [{ status: 'SENT_TO_SAP' }, { status: 'FAILED', failureCode: 'NO_RESPONSE_FROM_SAP' }] as const;
+const WAITING = WAITING_FOR_SAP;
 
 sapApiRouter.get('/po', async (req, res, next) => {
   try {
@@ -300,7 +302,7 @@ sapApiRouter.get('/po', async (req, res, next) => {
     const record = await prisma.pORecord.findFirst({
       where: {
         deletedAt: null,
-        status: 'SENT_TO_SAP',
+        OR: WAITING_FOR_SAP,
         ...(po ? { header: { is: { poNumber: { equals: po, mode: 'insensitive' as const } } } } : {}),
       },
       orderBy: { sentToSapAt: 'asc' },

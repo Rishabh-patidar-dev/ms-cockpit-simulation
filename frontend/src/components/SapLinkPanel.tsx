@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { RecordDetail } from '../lib/types';
 
 /** Copies text; falls back to a hidden textarea where the Clipboard API is unavailable. */
-async function copyText(text: string): Promise<boolean> {
+export async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;

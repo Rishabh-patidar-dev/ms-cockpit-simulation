@@ -74,7 +74,7 @@ describe('the single address, /po (for a SAP job that can use only one link)', (
     expect(res.headers['content-disposition']).toBe('attachment; filename="PO_PO-AAA_1.csv"');
     expect(res.text).toContain('H,PO-AAA,1,APX-1,2026-09-18');
     const where = prismaMock.pORecord.findFirst.mock.calls.at(-1)![0] as unknown as { where: Record<string, unknown>; orderBy: unknown };
-    expect(where.where).toMatchObject({ status: 'SENT_TO_SAP', deletedAt: null });
+    expect(where.where).toMatchObject({ OR: [{ status: 'SENT_TO_SAP' }, { status: 'FAILED', failureCode: 'NO_RESPONSE_FROM_SAP' }], deletedAt: null });
     expect(where.orderBy).toEqual({ sentToSapAt: 'asc' });
   });
 
@@ -234,10 +234,10 @@ describe('GET /orders', () => {
     expect(o.lines[1]).toMatchObject({ quantity: '10', unitPrice: '1.50', deliveryDate: '' });
   });
 
-  it('asks only for orders that are with SAP', async () => {
+  it('asks only for orders that are with SAP, including those past the wait that SAP has not answered', async () => {
     await get(await makeApp(), '/orders?limit=5');
     expect(prismaMock.pORecord.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { status: 'SENT_TO_SAP', deletedAt: null }, take: 5 }),
+      expect.objectContaining({ where: { OR: [{ status: 'SENT_TO_SAP' }, { status: 'FAILED', failureCode: 'NO_RESPONSE_FROM_SAP' }], deletedAt: null }, take: 5 }),
     );
   });
 
@@ -298,6 +298,18 @@ describe('GET /orders/:correlationId/csv', () => {
     const json = (await get(app, '/orders/PO-AAA')).body;
     expect(csv.split('\n')[0]).toContain(`,${json.header.poNumber},${json.header.poDate},`);
     expect(csv.split('\n')).toHaveLength(json.lines.length + 2);
+  });
+
+  it('still sends an order SAP has not answered after the wait ran out, but not one SAP rejected', async () => {
+    records = [
+      record({ correlationId: 'PO-LATE', status: 'FAILED', failureCode: 'NO_RESPONSE_FROM_SAP' }),
+      record({ correlationId: 'PO-REJ', status: 'FAILED', failureCode: 'SAP_REJECTED' }),
+    ];
+    const app = await makeApp();
+    const late = await get(app, '/orders/PO-LATE/csv');
+    expect(late.status).toBe(200);
+    expect(late.text).toContain('H,PO-LATE,1,APX-1,');
+    expect((await get(app, '/orders/PO-REJ/csv')).status).toBe(409);
   });
 
   it('404 for an order that does not exist, 409 for one that is not waiting for SAP', async () => {
